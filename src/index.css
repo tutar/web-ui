@@ -1,0 +1,102 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --color-theme-base: var(--bg-base);
+  --color-theme-surface: var(--bg-surface);
+  --color-theme-surface-hover: var(--bg-surface-hover);
+  --color-theme-surface-active: var(--bg-surface-active);
+  --color-theme-border: var(--border-default);
+  --color-theme-border-muted: var(--border-muted);
+  --color-theme-text: var(--text-primary);
+  --color-theme-text-secondary: var(--text-secondary);
+  --color-theme-text-muted: var(--text-muted);
+  --color-theme-accent: var(--accent-color);
+}
+
+:root {
+  --bg-base: #0A0A0A;
+  --bg-surface: #0E0E0D;
+  --bg-surface-hover: #1A1A18;
+  --bg-surface-active: #2A2A28;
+  --border-default: #2A2A28;
+  --border-muted: #3A3A38;
+  --text-primary: #E0D8D0;
+  --text-secondary: #8E8E8A;
+  --text-muted: #5A5A58;
+  --accent-color: #C5A059;
+}
+
+:root.light {
+  --bg-base: #F8F9FA;
+  --bg-surface: #FFFFFF;
+  --bg-surface-hover: #F1F3F5;
+  --bg-surface-active: #E9ECEF;
+  --border-default: #DEE2E6;
+  --border-muted: #CED4DA;
+  --text-primary: #212529;
+  --text-secondary: #495057;
+  --text-muted: #868E96;
+  --accent-color: #D4AF37; /* A bit visible but classic gold */
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-default);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-muted);
+}
+
+.prose {
+  --tw-prose-body: var(--text-primary);
+  --tw-prose-headings: var(--text-primary);
+  --tw-prose-lead: var(--text-secondary);
+  --tw-prose-links: var(--accent-color);
+  --tw-prose-bold: var(--text-primary);
+  --tw-prose-counters: var(--text-secondary);
+  --tw-prose-bullets: var(--text-secondary);
+  --tw-prose-hr: var(--border-default);
+  --tw-prose-quotes: var(--text-primary);
+  --tw-prose-quote-borders: var(--border-default);
+  --tw-prose-captions: var(--text-secondary);
+  --tw-prose-code: var(--text-primary);
+  --tw-prose-pre-code: var(--text-primary);
+  --tw-prose-pre-bg: var(--bg-surface-active);
+  --tw-prose-th-borders: var(--border-default);
+  --tw-prose-td-borders: var(--border-default);
+  color: var(--tw-prose-body);
+}
+
+.prose :where(code):not(:where([class~="not-prose"] *)) {
+  background-color: var(--bg-surface-active);
+  padding: 0.2em 0.4em;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-weight: 400;
+}
+
+.prose :where(pre):not(:where([class~="not-prose"] *)) {
+  background-color: var(--bg-surface-active);
+  border: 1px solid var(--border-default);
+  border-radius: 0.375rem;
+  padding: 1em;
+  overflow-x: auto;
+}
+
+.prose :where(pre code):not(:where([class~="not-prose"] *)) {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+}
