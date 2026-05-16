@@ -1,14 +1,17 @@
 {
-  "name": "react-example",
+  "name": "@managed-agent/web-ui",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "vite --port=4173 --host=0.0.0.0",
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

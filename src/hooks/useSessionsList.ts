@@ -1,6 +1,14 @@
+/**
+ * Session-list hook for the standalone web UI.
+ *
+ * The API base URL must stay environment-driven so local development talks to
+ * the intended managed-agent-api instance instead of a stale external tunnel.
+ */
 import { useState, useCallback, useEffect } from 'react';
 
-const API_BASE_URL = 'https://70ef-27-38-208-224.ngrok-free.app';
+const API_BASE_URL = (
+  import.meta.env.VITE_MANAGED_AGENT_API_BASE_URL || 'http://127.0.0.1:3000'
+).replace(/\/$/, '');
 
 export interface SessionListItem {
   sessionId: string;
@@ -17,7 +25,7 @@ export function useSessionsList(userId: string = 'demo-user') {
   const fetchSessions = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/users/${userId}/sessions`);
+      const res = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(userId)}/sessions`);
       if (res.ok) {
         const data = await res.json();
         setSessions(data.items || []);

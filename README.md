@@ -1,20 +1,13 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Managed Agent Web UI
 
-# Run and deploy your AI Studio app
+独立 Web 前端，消费 `managed-agent-api` 提供的 HTTP/SSE 接口。
 
-This contains everything you need to run your app locally.
+## 本地运行
 
-View your app in AI Studio: https://ai.studio/apps/9cde12e4-aebc-46ef-88a2-9be1449960b8
+1. 配置环境变量：
+   - `VITE_MANAGED_AGENT_API_BASE_URL`
+   - `VITE_MANAGED_AGENT_USER_ID`
+2. 启动：
+   - `npm run start`
 
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+默认本地 API 地址见 [.env.example](./.env.example)。
