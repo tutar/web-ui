@@ -22,15 +22,32 @@ export function Layout() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRecentChatsExpanded, setIsRecentChatsExpanded] = useState(true);
 
-  const { sessions } = useSessionsList();
+  const { sessions, hasMore, loadMore, loadingMore } = useSessionsList();
 
   const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      return true;
+    }
     return localStorage.getItem("agentos_sidebar_collapsed") === "true";
   });
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     return parseInt(localStorage.getItem("agentos_sidebar_width") || "256", 10);
   });
   const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setIsCollapsed(true);
+      } else {
+        setIsCollapsed(localStorage.getItem("agentos_sidebar_collapsed") === "true");
+      }
+    };
+    
+    // We already run this check for initial state, but let's also listen to resize
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -98,14 +115,13 @@ export function Layout() {
           <div
             className={cn(
               "flex items-center overflow-hidden",
-              isCollapsed && "md:hidden",
             )}
           >
             <div className="w-8 h-8 rounded-full bg-theme-accent text-black flex flex-shrink-0 items-center justify-center font-bold text-xs">
               A
             </div>
             {!isCollapsed && (
-              <span className="ml-3 font-serif italic text-xl text-theme-accent tracking-tight truncate hidden md:block">
+              <span className="ml-3 font-serif italic text-xl text-theme-accent tracking-tight truncate">
                 AgentOS
               </span>
             )}
@@ -114,7 +130,7 @@ export function Layout() {
           <button
             onClick={handleToggleCollapse}
             className={cn(
-              "p-1.5 rounded-lg text-theme-text-secondary hover:text-theme-text hover:bg-theme-surface-active transition-colors hidden md:flex items-center justify-center",
+              "p-1.5 rounded-lg text-theme-text-secondary hover:text-theme-text hover:bg-theme-surface-active transition-colors flex items-center justify-center",
               isCollapsed && "mx-auto w-full",
             )}
             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -136,18 +152,18 @@ export function Layout() {
                 end={item.path === "/chats"}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center justify-center md:justify-start gap-3 px-3 py-2.5 rounded text-xs uppercase tracking-widest font-medium transition-colors whitespace-nowrap",
+                    "flex items-center justify-start gap-3 px-3 py-2.5 rounded text-xs uppercase tracking-widest font-medium transition-colors whitespace-nowrap",
                     isActive
                       ? "bg-theme-surface-hover text-theme-accent border-l-2 border-theme-accent"
                       : "text-theme-text-secondary hover:bg-theme-surface-hover hover:text-theme-text border-l-2 border-transparent",
-                    isCollapsed && "md:justify-center !px-0",
+                    isCollapsed && "justify-center !px-0",
                   )
                 }
                 title={isCollapsed ? item.label : undefined}
               >
                 <item.icon className="w-4 h-4 flex-shrink-0" />
                 {!isCollapsed && (
-                  <span className="hidden md:block transition-opacity duration-300">
+                  <span className="transition-opacity duration-300">
                     {item.label}
                   </span>
                 )}
@@ -193,6 +209,15 @@ export function Layout() {
                       </span>
                     </NavLink>
                   ))}
+                  {hasMore && (
+                    <button
+                      onClick={() => loadMore()}
+                      disabled={loadingMore}
+                      className="px-3 py-2 text-xs text-theme-text-secondary hover:text-theme-text hover:bg-theme-surface-hover rounded text-left transition-colors"
+                    >
+                      {loadingMore ? t("common.loading", "Loading...") : t("layout.loadMore", "Load more...")}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -203,14 +228,14 @@ export function Layout() {
           <button
             onClick={() => setIsSettingsOpen(true)}
             className={cn(
-              "flex w-full items-center justify-center md:justify-start gap-3 px-3 py-2.5 rounded text-xs uppercase tracking-widest font-medium text-theme-text-secondary hover:bg-theme-surface-hover hover:text-theme-text transition-colors border-l-2 border-transparent whitespace-nowrap",
-              isCollapsed && "md:justify-center !px-0",
+              "flex w-full items-center justify-start gap-3 px-3 py-2.5 rounded text-xs uppercase tracking-widest font-medium text-theme-text-secondary hover:bg-theme-surface-hover hover:text-theme-text transition-colors border-l-2 border-transparent whitespace-nowrap",
+              isCollapsed && "justify-center !px-0",
             )}
             title={isCollapsed ? (t("layout.settings") as string) : undefined}
           >
             <Settings className="w-4 h-4 flex-shrink-0" />
             {!isCollapsed && (
-              <span className="hidden md:block transition-opacity duration-300">
+              <span className="transition-opacity duration-300">
                 {t("layout.settings")}
               </span>
             )}
