@@ -8,611 +8,583 @@
  * Keeping those two sources aligned avoids duplicate optimistic messages,
  * unstable process/assistant ordering, and refresh-time transcript drift.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+
 import { fetchEventSource } from "@microsoft/fetch-event-source";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getApiBaseUrl } from "../lib/api-base-url";
 
 type ToolCallStatus = "started" | "completed" | "error";
 
 type ProcessStep =
-  | {
-      id: string;
-      type: "reasoning";
-      content: string;
-    }
-  | {
-      id: string;
-      type: "tool_call";
-      title: string;
-      content: string;
-      status: ToolCallStatus;
-    }
-  | {
-      id: string;
-      type: "tool_result";
-      title: string;
-      content: string;
-      status: "completed" | "error";
-    };
+	| {
+			id: string;
+			type: "reasoning";
+			content: string;
+	  }
+	| {
+			id: string;
+			type: "tool_call";
+			title: string;
+			content: string;
+			status: ToolCallStatus;
+	  }
+	| {
+			id: string;
+			type: "tool_result";
+			title: string;
+			content: string;
+			status: "completed" | "error";
+	  };
 
 export interface MessageContentItem {
-  type: "text" | "image" | "video" | "tool_call";
-  text?: string;
-  url?: string;
-  toolCallId?: string;
-  toolName?: string;
-  status?: ToolCallStatus;
-  arguments?: string;
-  result?: string;
-  error?: string;
+	type: "text" | "image" | "video" | "tool_call";
+	text?: string;
+	url?: string;
+	toolCallId?: string;
+	toolName?: string;
+	status?: ToolCallStatus;
+	arguments?: string;
+	result?: string;
+	error?: string;
 }
 
 export interface MessageEntry {
-  id: string;
-  parentId: string | null;
-  createdAt: string;
-  messageType: "user" | "assistant";
-  content: MessageContentItem[];
-  processSteps?: ProcessStep[];
+	id: string;
+	parentId: string | null;
+	createdAt: string;
+	messageType: "user" | "assistant";
+	content: MessageContentItem[];
+	processSteps?: ProcessStep[];
 }
 
 type SessionSnapshotEntry = {
-  id: string;
-  parentId: string | null;
-  createdAt: string;
-  messageType: "user" | "process" | "assistant";
-  content: MessageContentItem[];
+	id: string;
+	parentId: string | null;
+	createdAt: string;
+	messageType: "user" | "process" | "assistant";
+	content: MessageContentItem[];
 };
 
 type SessionSnapshot = {
-  sessionId: string;
-  sessionName: string;
-  status: "idle" | "running" | "error";
-  entries: SessionSnapshotEntry[];
+	sessionId: string;
+	sessionName: string;
+	status: "idle" | "running" | "error";
+	entries: SessionSnapshotEntry[];
 };
 
 export interface SessionData {
-  sessionId: string;
-  sessionName: string;
-  status: "idle" | "running" | "error";
+	sessionId: string;
+	sessionName: string;
+	status: "idle" | "running" | "error";
 }
 
-const API_BASE_URL = (
-  import.meta.env.VITE_MANAGED_AGENT_API_BASE_URL || "http://127.0.0.1:4173"
-).replace(/\/$/, "");
-const DEFAULT_USER_ID =
-  import.meta.env.VITE_MANAGED_AGENT_USER_ID || "demo-user";
+const API_BASE_URL = getApiBaseUrl();
 
 const buildSessionsUrl = (sessionId: string) => {
-  return `${API_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`;
+	return `${API_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`;
 };
 
 const mapProcessContentToSteps = (content: MessageContentItem[]): ProcessStep[] => {
-  return content.flatMap((item) => {
-    if (item.type === "text" && item.text) {
-      return [
-        {
-          id: `reasoning_${Math.random().toString(36).slice(2)}`,
-          type: "reasoning" as const,
-          content: item.text,
-        },
-      ];
-    }
+	return content.flatMap((item) => {
+		if (item.type === "text" && item.text) {
+			return [
+				{
+					id: `reasoning_${Math.random().toString(36).slice(2)}`,
+					type: "reasoning" as const,
+					content: item.text,
+				},
+			];
+		}
 
-    if (item.type !== "tool_call" || !item.toolCallId || !item.toolName || !item.status) {
-      return [];
-    }
+		if (item.type !== "tool_call" || !item.toolCallId || !item.toolName || !item.status) {
+			return [];
+		}
 
-    const steps: ProcessStep[] = [
-      {
-        id: item.toolCallId,
-        type: "tool_call",
-        title: `Tool: ${item.toolName}`,
-        content: item.arguments || "{}",
-        status: item.status,
-      },
-    ];
+		const steps: ProcessStep[] = [
+			{
+				id: item.toolCallId,
+				type: "tool_call",
+				title: `Tool: ${item.toolName}`,
+				content: item.arguments || "{}",
+				status: item.status,
+			},
+		];
 
-    if (item.status === "completed" && item.result) {
-      steps.push({
-        id: `${item.toolCallId}_result`,
-        type: "tool_result",
-        title: `Result: ${item.toolName}`,
-        content: item.result,
-        status: "completed",
-      });
-    }
+		if (item.status === "completed" && item.result) {
+			steps.push({
+				id: `${item.toolCallId}_result`,
+				type: "tool_result",
+				title: `Result: ${item.toolName}`,
+				content: item.result,
+				status: "completed",
+			});
+		}
 
-    if (item.status === "error" && item.error) {
-      steps.push({
-        id: `${item.toolCallId}_error`,
-        type: "tool_result",
-        title: `Error: ${item.toolName}`,
-        content: item.error,
-        status: "error",
-      });
-    }
+		if (item.status === "error" && item.error) {
+			steps.push({
+				id: `${item.toolCallId}_error`,
+				type: "tool_result",
+				title: `Error: ${item.toolName}`,
+				content: item.error,
+				status: "error",
+			});
+		}
 
-    return steps;
-  });
+		return steps;
+	});
 };
 
 const normalizeSessionEntries = (entries: SessionSnapshotEntry[]): MessageEntry[] => {
-  const processEntryById = new Map(
-    entries
-      .filter((entry) => entry.messageType === "process")
-      .map((entry) => [entry.id, entry] as const),
-  );
+	const processEntryById = new Map(
+		entries.filter((entry) => entry.messageType === "process").map((entry) => [entry.id, entry] as const),
+	);
 
-  return entries.reduce<MessageEntry[]>((normalizedEntries, entry) => {
-    if (entry.messageType === "user") {
-      normalizedEntries.push({
-        id: entry.id,
-        parentId: entry.parentId,
-        createdAt: entry.createdAt,
-        messageType: "user",
-        content: entry.content,
-      });
-      return normalizedEntries;
-    }
+	return entries.reduce<MessageEntry[]>((normalizedEntries, entry) => {
+		if (entry.messageType === "user") {
+			normalizedEntries.push({
+				id: entry.id,
+				parentId: entry.parentId,
+				createdAt: entry.createdAt,
+				messageType: "user",
+				content: entry.content,
+			});
+			return normalizedEntries;
+		}
 
-    if (entry.messageType === "assistant") {
-      const processEntry = entry.parentId
-        ? processEntryById.get(entry.parentId)
-        : undefined;
+		if (entry.messageType === "assistant") {
+			const processEntry = entry.parentId ? processEntryById.get(entry.parentId) : undefined;
 
-      normalizedEntries.push({
-        id: entry.id,
-        parentId: entry.parentId,
-        createdAt: entry.createdAt,
-        messageType: "assistant",
-        content: entry.content,
-        processSteps: processEntry
-          ? mapProcessContentToSteps(processEntry.content)
-          : [],
-      });
-    }
+			normalizedEntries.push({
+				id: entry.id,
+				parentId: entry.parentId,
+				createdAt: entry.createdAt,
+				messageType: "assistant",
+				content: entry.content,
+				processSteps: processEntry ? mapProcessContentToSteps(processEntry.content) : [],
+			});
+		}
 
-    return normalizedEntries;
-  }, []);
+		return normalizedEntries;
+	}, []);
 };
 
-const createPlaceholderAssistant = (
-  entryId: string,
-  parentId: string,
-  createdAt: string,
-): MessageEntry => {
-  return {
-    id: entryId,
-    parentId,
-    createdAt,
-    messageType: "assistant",
-    content: [],
-    processSteps: [],
-  };
+const createPlaceholderAssistant = (entryId: string, parentId: string, createdAt: string): MessageEntry => {
+	return {
+		id: entryId,
+		parentId,
+		createdAt,
+		messageType: "assistant",
+		content: [],
+		processSteps: [],
+	};
 };
 
 const appendProcessStepToPlaceholder = (
-  messages: MessageEntry[],
-  entryId: string,
-  parentId: string,
-  step: ProcessStep,
+	messages: MessageEntry[],
+	entryId: string,
+	parentId: string,
+	step: ProcessStep,
 ): MessageEntry[] => {
-  let found = false;
+	let found = false;
 
-  const nextMessages = messages.map((message) => {
-    if (message.id !== entryId) {
-      return message;
-    }
+	const nextMessages = messages.map((message) => {
+		if (message.id !== entryId) {
+			return message;
+		}
 
-    found = true;
-    return {
-      ...message,
-      processSteps: [...(message.processSteps || []), step],
-    };
-  });
+		found = true;
+		return {
+			...message,
+			processSteps: [...(message.processSteps || []), step],
+		};
+	});
 
-  if (found) {
-    return nextMessages;
-  }
+	if (found) {
+		return nextMessages;
+	}
 
-  return [
-    ...messages,
-    {
-      ...createPlaceholderAssistant(entryId, parentId, new Date().toISOString()),
-      processSteps: [step],
-    },
-  ];
+	return [
+		...messages,
+		{
+			...createPlaceholderAssistant(entryId, parentId, new Date().toISOString()),
+			processSteps: [step],
+		},
+	];
 };
 
 const attachDeltaToAssistant = (
-  messages: MessageEntry[],
-  entryId: string,
-  parentId: string,
-  text: string,
+	messages: MessageEntry[],
+	entryId: string,
+	parentId: string,
+	text: string,
 ): MessageEntry[] => {
-  let placeholderSteps: ProcessStep[] = [];
-  let foundAssistant = false;
+	let placeholderSteps: ProcessStep[] = [];
+	let foundAssistant = false;
 
-  const withoutPlaceholder = messages.filter((message) => {
-    if (message.id === parentId) {
-      placeholderSteps = message.processSteps || [];
-      return false;
-    }
+	const withoutPlaceholder = messages.filter((message) => {
+		if (message.id === parentId) {
+			placeholderSteps = message.processSteps || [];
+			return false;
+		}
 
-    return true;
-  });
+		return true;
+	});
 
-  const nextMessages = withoutPlaceholder.map((message) => {
-    if (message.id !== entryId) {
-      return message;
-    }
+	const nextMessages = withoutPlaceholder.map((message) => {
+		if (message.id !== entryId) {
+			return message;
+		}
 
-    foundAssistant = true;
-    const existingTextIndex = message.content.findIndex((item) => item.type === "text");
+		foundAssistant = true;
+		const existingTextIndex = message.content.findIndex((item) => item.type === "text");
 
-    const nextContent =
-      existingTextIndex >= 0
-        ? message.content.map((item, i) =>
-            i === existingTextIndex
-              ? { ...item, text: `${item.text || ""}${text}` }
-              : item,
-          )
-        : [...message.content, { type: "text" as const, text }];
+		const nextContent =
+			existingTextIndex >= 0
+				? message.content.map((item, i) =>
+						i === existingTextIndex ? { ...item, text: `${item.text || ""}${text}` } : item,
+					)
+				: [...message.content, { type: "text" as const, text }];
 
-    return {
-      ...message,
-      content: nextContent,
-      processSteps:
-        message.processSteps && message.processSteps.length > 0
-          ? message.processSteps
-          : placeholderSteps,
-    };
-  });
+		return {
+			...message,
+			content: nextContent,
+			processSteps:
+				message.processSteps && message.processSteps.length > 0 ? message.processSteps : placeholderSteps,
+		};
+	});
 
-  if (foundAssistant) {
-    return nextMessages;
-  }
+	if (foundAssistant) {
+		return nextMessages;
+	}
 
-  return [
-    ...nextMessages,
-    {
-      id: entryId,
-      parentId,
-      createdAt: new Date().toISOString(),
-      messageType: "assistant",
-      content: [{ type: "text", text }],
-      processSteps: placeholderSteps,
-    },
-  ];
+	return [
+		...nextMessages,
+		{
+			id: entryId,
+			parentId,
+			createdAt: new Date().toISOString(),
+			messageType: "assistant",
+			content: [{ type: "text", text }],
+			processSteps: placeholderSteps,
+		},
+	];
 };
 
 const buildStreamUrl = (sessionId?: string | null) => {
-  const basePath = sessionId
-    ? `/sessions/${encodeURIComponent(sessionId)}/messages`
-    : "/sessions";
-  const params = new URLSearchParams({
-    userId: DEFAULT_USER_ID,
-    includeProcess: "true",
-  });
+	const basePath = sessionId ? `/sessions/${encodeURIComponent(sessionId)}/messages` : "/sessions";
+	const params = new URLSearchParams({
+		includeProcess: "true",
+	});
 
-  return `${API_BASE_URL}${basePath}?${params.toString()}`;
+	return `${API_BASE_URL}${basePath}?${params.toString()}`;
 };
 
-export function useChatSession(
-  initialSessionId?: string,
-  onSessionCreated?: (sessionId: string) => void,
-) {
-  const [messages, setMessages] = useState<MessageEntry[]>([]);
-  const [session, setSession] = useState<SessionData | null>(
-    initialSessionId
-      ? {
-          sessionId: initialSessionId,
-          sessionName: "",
-          status: "idle",
-        }
-      : null,
-  );
-  const [isLoading, setIsLoading] = useState(false);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const fetchRequestIdRef = useRef(0);
-  const activeStreamIdRef = useRef(0);
-  const currentViewedSessionIdRef = useRef<string | null>(initialSessionId || null);
+export function useChatSession(initialSessionId?: string, onSessionCreated?: (sessionId: string) => void) {
+	const [messages, setMessages] = useState<MessageEntry[]>([]);
+	const [session, setSession] = useState<SessionData | null>(
+		initialSessionId
+			? {
+					sessionId: initialSessionId,
+					sessionName: "",
+					status: "idle",
+				}
+			: null,
+	);
+	const [isLoading, setIsLoading] = useState(false);
+	const abortControllerRef = useRef<AbortController | null>(null);
+	const fetchRequestIdRef = useRef(0);
+	const activeStreamIdRef = useRef(0);
+	const currentViewedSessionIdRef = useRef<string | null>(initialSessionId || null);
 
-  useEffect(() => {
-    if (initialSessionId === currentViewedSessionIdRef.current) {
-      return;
-    }
-    currentViewedSessionIdRef.current = initialSessionId || null;
+	useEffect(() => {
+		if (initialSessionId === currentViewedSessionIdRef.current) {
+			return;
+		}
+		currentViewedSessionIdRef.current = initialSessionId || null;
 
-    /**
-     * Route changes define the viewed session. Reset the local view immediately
-     * so the old transcript/title cannot remain visible while the next snapshot
-     * is loading, and invalidate any in-flight fetch or stream callbacks.
-     */
-    fetchRequestIdRef.current += 1;
-    activeStreamIdRef.current += 1;
+		/**
+		 * Route changes define the viewed session. Reset the local view immediately
+		 * so the old transcript/title cannot remain visible while the next snapshot
+		 * is loading, and invalidate any in-flight fetch or stream callbacks.
+		 */
+		fetchRequestIdRef.current += 1;
+		activeStreamIdRef.current += 1;
 
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+		if (abortControllerRef.current) {
+			abortControllerRef.current.abort();
+			abortControllerRef.current = null;
+		}
 
-    setIsLoading(false);
-    setMessages([]);
-    setSession(
-      initialSessionId
-        ? {
-            sessionId: initialSessionId,
-            sessionName: "",
-            status: "idle",
-          }
-        : null,
-    );
-  }, [initialSessionId]);
+		setIsLoading(false);
+		setMessages([]);
+		setSession(
+			initialSessionId
+				? {
+						sessionId: initialSessionId,
+						sessionName: "",
+						status: "idle",
+					}
+				: null,
+		);
+	}, [initialSessionId]);
 
-  const fetchSession = useCallback(async (id: string) => {
-    const requestId = fetchRequestIdRef.current + 1;
-    fetchRequestIdRef.current = requestId;
+	const fetchSession = useCallback(async (id: string) => {
+		const requestId = fetchRequestIdRef.current + 1;
+		fetchRequestIdRef.current = requestId;
 
-    try {
-      const res = await fetch(buildSessionsUrl(id));
+		try {
+			const res = await fetch(buildSessionsUrl(id), {
+				credentials: "include",
+			});
 
-      if (!res.ok) {
-        if (fetchRequestIdRef.current === requestId) {
-          setSession(null);
-          setMessages([]);
-        }
-        return;
-      }
+			if (!res.ok) {
+				if (fetchRequestIdRef.current === requestId) {
+					setSession(null);
+					setMessages([]);
+				}
+				return;
+			}
 
-      const data = (await res.json()) as SessionSnapshot;
+			const data = (await res.json()) as SessionSnapshot;
 
-      if (fetchRequestIdRef.current !== requestId) {
-        return;
-      }
+			if (fetchRequestIdRef.current !== requestId) {
+				return;
+			}
 
-      setSession({
-        sessionId: data.sessionId,
-        sessionName: data.sessionName,
-        status: data.status,
-      });
-      setMessages(normalizeSessionEntries(data.entries || []));
-    } catch (error) {
-      if (fetchRequestIdRef.current !== requestId) {
-        return;
-      }
+			setSession({
+				sessionId: data.sessionId,
+				sessionName: data.sessionName,
+				status: data.status,
+			});
+			setMessages(normalizeSessionEntries(data.entries || []));
+		} catch (error) {
+			if (fetchRequestIdRef.current !== requestId) {
+				return;
+			}
 
-      console.error("Failed to fetch session", error);
-    }
-  }, []);
+			console.error("Failed to fetch session", error);
+		}
+	}, []);
 
-  const handleSSEMessage = useCallback(
-    (event: string, data: Record<string, unknown>) => {
-      switch (event) {
-        case "session.created":
-          currentViewedSessionIdRef.current = String(data.sessionId);
-          setSession({
-            sessionId: String(data.sessionId),
-            sessionName: String(data.sessionName),
-            status: "running",
-          });
-          window.dispatchEvent(new CustomEvent("agentos-session-changed"));
-          onSessionCreated?.(String(data.sessionId));
-          break;
-        case "message.accepted":
-          setMessages((prev) => {
-            const entry = data.entry as SessionSnapshotEntry;
-            const filtered = prev.filter(m => !m.id.startsWith("optimistic_"));
+	const handleSSEMessage = useCallback(
+		(event: string, data: Record<string, unknown>) => {
+			switch (event) {
+				case "session.created":
+					currentViewedSessionIdRef.current = String(data.sessionId);
+					setSession({
+						sessionId: String(data.sessionId),
+						sessionName: String(data.sessionName),
+						status: "running",
+					});
+					window.dispatchEvent(new CustomEvent("agentos-session-changed"));
+					onSessionCreated?.(String(data.sessionId));
+					break;
+				case "message.accepted":
+					setMessages((prev) => {
+						const entry = data.entry as SessionSnapshotEntry;
+						const filtered = prev.filter((m) => !m.id.startsWith("optimistic_"));
 
-            if (filtered.find((message) => message.id === entry.id)) {
-              return filtered;
-            }
+						if (filtered.find((message) => message.id === entry.id)) {
+							return filtered;
+						}
 
-            return [
-              ...filtered,
-              {
-                id: entry.id,
-                parentId: entry.parentId,
-                createdAt: entry.createdAt,
-                messageType: "user",
-                content: entry.content,
-              },
-            ];
-          });
-          break;
-        case "process.delta":
-          setMessages((prev) =>
-            appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
-              id: `reasoning_${Math.random().toString(36).slice(2)}`,
-              type: "reasoning",
-              content: String(data.text || ""),
-            }),
-          );
-          break;
-        case "action.started":
-          setMessages((prev) =>
-            appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
-              id: String(data.toolCallId),
-              type: "tool_call",
-              title: `Tool: ${String(data.name)}`,
-              content: String(data.arguments || "{}"),
-              status: "started",
-            }),
-          );
-          break;
-        case "action.completed":
-          setMessages((prev) =>
-            appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
-              id: `${String(data.toolCallId)}_result`,
-              type: "tool_result",
-              title: `Result: ${String(data.name)}`,
-              content: String(data.result || ""),
-              status: "completed",
-            }),
-          );
-          break;
-        case "action.failed":
-          setMessages((prev) =>
-            appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
-              id: `${String(data.toolCallId)}_error`,
-              type: "tool_result",
-              title: `Error: ${String(data.name)}`,
-              content: String(data.error || "Failed"),
-              status: "error",
-            }),
-          );
-          break;
-        case "final.output.delta":
-          setMessages((prev) =>
-            attachDeltaToAssistant(
-              prev,
-              String(data.entryId),
-              String(data.parentId),
-              String(data.text || ""),
-            ),
-          );
-          break;
-        case "final.output.completed":
-          setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
-          setIsLoading(false);
-          break;
-        case "run.failed":
-          setSession((prev) => (prev ? { ...prev, status: "error" } : null));
-          setIsLoading(false);
-          break;
-        case "run.cancelled":
-          setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
-          setIsLoading(false);
-          break;
-        default:
-          break;
-      }
-    },
-    [onSessionCreated],
-  );
+						return [
+							...filtered,
+							{
+								id: entry.id,
+								parentId: entry.parentId,
+								createdAt: entry.createdAt,
+								messageType: "user",
+								content: entry.content,
+							},
+						];
+					});
+					break;
+				case "process.delta":
+					setMessages((prev) =>
+						appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
+							id: `reasoning_${Math.random().toString(36).slice(2)}`,
+							type: "reasoning",
+							content: String(data.text || ""),
+						}),
+					);
+					break;
+				case "action.started":
+					setMessages((prev) =>
+						appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
+							id: String(data.toolCallId),
+							type: "tool_call",
+							title: `Tool: ${String(data.name)}`,
+							content: String(data.arguments || "{}"),
+							status: "started",
+						}),
+					);
+					break;
+				case "action.completed":
+					setMessages((prev) =>
+						appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
+							id: `${String(data.toolCallId)}_result`,
+							type: "tool_result",
+							title: `Result: ${String(data.name)}`,
+							content: String(data.result || ""),
+							status: "completed",
+						}),
+					);
+					break;
+				case "action.failed":
+					setMessages((prev) =>
+						appendProcessStepToPlaceholder(prev, String(data.entryId), String(data.parentId), {
+							id: `${String(data.toolCallId)}_error`,
+							type: "tool_result",
+							title: `Error: ${String(data.name)}`,
+							content: String(data.error || "Failed"),
+							status: "error",
+						}),
+					);
+					break;
+				case "final.output.delta":
+					setMessages((prev) =>
+						attachDeltaToAssistant(prev, String(data.entryId), String(data.parentId), String(data.text || "")),
+					);
+					break;
+				case "final.output.completed":
+					setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
+					setIsLoading(false);
+					break;
+				case "run.failed":
+					setSession((prev) => (prev ? { ...prev, status: "error" } : null));
+					setIsLoading(false);
+					break;
+				case "run.cancelled":
+					setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
+					setIsLoading(false);
+					break;
+				default:
+					break;
+			}
+		},
+		[onSessionCreated],
+	);
 
-  const sendMessage = useCallback(
-    async (content: string, currentSessionId?: string | null) => {
-      const streamId = activeStreamIdRef.current + 1;
-      activeStreamIdRef.current = streamId;
-      
-      const optimisticMessage: MessageEntry = {
-        id: `optimistic_${Date.now()}`,
-        parentId: null,
-        createdAt: new Date().toISOString(),
-        messageType: 'user',
-        content: [{ type: 'text', text: content }],
-      };
-      
-      setMessages((prev) => [...prev, optimisticMessage]);
-      setIsLoading(true);
-      setSession((prev) => (prev ? { ...prev, status: "running" } : null));
+	const sendMessage = useCallback(
+		async (content: string, currentSessionId?: string | null) => {
+			const streamId = activeStreamIdRef.current + 1;
+			activeStreamIdRef.current = streamId;
 
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+			const optimisticMessage: MessageEntry = {
+				id: `optimistic_${Date.now()}`,
+				parentId: null,
+				createdAt: new Date().toISOString(),
+				messageType: "user",
+				content: [{ type: "text", text: content }],
+			};
 
-      const ctrl = new AbortController();
-      abortControllerRef.current = ctrl;
+			setMessages((prev) => [...prev, optimisticMessage]);
+			setIsLoading(true);
+			setSession((prev) => (prev ? { ...prev, status: "running" } : null));
 
-      try {
-        await fetchEventSource(buildStreamUrl(currentSessionId), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-          },
-          body: JSON.stringify({
-            ...(currentSessionId
-              ? {}
-              : {
-                  model: "deepseek/deepseek-v4-pro",
-                  thinkingLevel: "medium",
-                }),
-            input: {
-              content: [{ type: "text", text: content }],
-            },
-          }),
-          signal: ctrl.signal,
-          async onopen(response) {
-            if (response.ok) {
-              return;
-            }
+			if (abortControllerRef.current) {
+				abortControllerRef.current.abort();
+			}
 
-            const errorText = await response.text();
-            throw new Error(
-              `stream request failed: ${response.status} ${errorText}`,
-            );
-          },
-          onmessage(msg) {
-            if (activeStreamIdRef.current !== streamId) {
-              return;
-            }
+			const ctrl = new AbortController();
+			abortControllerRef.current = ctrl;
 
-            if (!msg.event || !msg.data) {
-              return;
-            }
+			try {
+				await fetchEventSource(buildStreamUrl(currentSessionId), {
+					method: "POST",
+					credentials: "include",
+					headers: {
+						"Content-Type": "application/json",
+						Accept: "text/event-stream",
+					},
+					body: JSON.stringify({
+						...(currentSessionId
+							? {}
+							: {
+									model: "deepseek/deepseek-v4-pro",
+									thinkingLevel: "medium",
+								}),
+						input: {
+							content: [{ type: "text", text: content }],
+						},
+					}),
+					signal: ctrl.signal,
+					async onopen(response) {
+						if (response.ok) {
+							return;
+						}
 
-            try {
-              handleSSEMessage(
-                msg.event,
-                JSON.parse(msg.data) as Record<string, unknown>,
-              );
-            } catch (error) {
-              console.error("Parse SSE data error", error);
-            }
-          },
-          onclose() {
-            if (activeStreamIdRef.current !== streamId) {
-              return;
-            }
+						const errorText = await response.text();
+						throw new Error(`stream request failed: ${response.status} ${errorText}`);
+					},
+					onmessage(msg) {
+						if (activeStreamIdRef.current !== streamId) {
+							return;
+						}
 
-            setIsLoading(false);
-          },
-          onerror(error) {
-            if (activeStreamIdRef.current !== streamId) {
-              throw error;
-            }
+						if (!msg.event || !msg.data) {
+							return;
+						}
 
-            console.error("SSE Error", error);
-            setIsLoading(false);
-            setSession((prev) => (prev ? { ...prev, status: "error" } : null));
-            throw error;
-          },
-        });
-      } catch (error) {
-        console.error("Failed to send message", error);
-        setIsLoading(false);
-      }
-    },
-    [handleSSEMessage],
-  );
+						try {
+							handleSSEMessage(msg.event, JSON.parse(msg.data) as Record<string, unknown>);
+						} catch (error) {
+							console.error("Parse SSE data error", error);
+						}
+					},
+					onclose() {
+						if (activeStreamIdRef.current !== streamId) {
+							return;
+						}
 
-  const cancelRun = useCallback(async () => {
-    if (session?.sessionId && session.status === "running") {
-      try {
-        await fetch(`${buildSessionsUrl(session.sessionId)}/cancel`, {
-          method: "POST",
-        });
-      } catch (error) {
-        console.error("Failed to cancel session", error);
-      }
-    }
+						setIsLoading(false);
+					},
+					onerror(error) {
+						if (activeStreamIdRef.current !== streamId) {
+							throw error;
+						}
 
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+						console.error("SSE Error", error);
+						setIsLoading(false);
+						setSession((prev) => (prev ? { ...prev, status: "error" } : null));
+						throw error;
+					},
+				});
+			} catch (error) {
+				console.error("Failed to send message", error);
+				setIsLoading(false);
+			}
+		},
+		[handleSSEMessage],
+	);
 
-    setIsLoading(false);
-    setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
-  }, [session]);
+	const cancelRun = useCallback(async () => {
+		if (session?.sessionId && session.status === "running") {
+			try {
+				await fetch(`${buildSessionsUrl(session.sessionId)}/cancel`, {
+					method: "POST",
+					credentials: "include",
+				});
+			} catch (error) {
+				console.error("Failed to cancel session", error);
+			}
+		}
 
-  return {
-    messages,
-    session,
-    isLoading,
-    sendMessage,
-    cancelRun,
-    fetchSession,
-  };
+		if (abortControllerRef.current) {
+			abortControllerRef.current.abort();
+		}
+
+		setIsLoading(false);
+		setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
+	}, [session]);
+
+	return {
+		messages,
+		session,
+		isLoading,
+		sendMessage,
+		cancelRun,
+		fetchSession,
+	};
 }

@@ -9,12 +9,15 @@
 `apps/web-ui` 是独立前端应用。
 
 固定本地端口约定：
-- `managed-agent-api`: `3000`
+- `managed-agent-api`: `4173`
 - `harness-worker`: `4000`
-- `web-ui`: `4173`
+- `web-ui`: `3000`
 
-默认 API 基址：
-- `VITE_MANAGED_AGENT_API_BASE_URL=http://127.0.0.1:3000`
+默认 API 基址会按浏览器当前 hostname 自动推导：
+- `http://localhost:3000` -> `http://localhost:4173`
+- `http://127.0.0.1:3000` -> `http://127.0.0.1:4173`
+
+如果手工配置 `VITE_MANAGED_AGENT_API_BASE_URL`，本地开发应保持与页面相同的 loopback hostname，避免混用 `localhost` 和 `127.0.0.1`，否则登录 cookie 不会跨站发送。
 
 启动：
 
@@ -29,6 +32,5 @@ npm run dev:all
 npm run dev:all:pi
 ```
 
-如需覆盖 API 地址或用户 ID，可在本地环境中设置：
+如需覆盖 API 地址，可在本地环境中设置：
 - `VITE_MANAGED_AGENT_API_BASE_URL`
-- `VITE_MANAGED_AGENT_USER_ID`
