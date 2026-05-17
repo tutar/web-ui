@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/utils";
 import { ProcessStep } from "./ProcessStep";
 
@@ -82,8 +83,9 @@ export function AgentMessage({ message }: { message: any }) {
 
 			{message.content && (
 				<div className="flex flex-col gap-2">
-					<div className="prose prose-sm max-w-none w-full overflow-hidden">
+					<div className="prose prose-sm max-w-none w-full overflow-x-auto">
 						<Markdown
+							remarkPlugins={[remarkGfm]}
 							components={{
 								code({ node, inline, className, children, ...props }: any) {
 									const match = /language-(\w+)/.exec(className || "");
