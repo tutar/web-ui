@@ -248,14 +248,16 @@ const attachDeltaToAssistant = (
     }
 
     foundAssistant = true;
-    const nextContent = [...message.content];
-    const textItem = nextContent.find((item) => item.type === "text");
+    const existingTextIndex = message.content.findIndex((item) => item.type === "text");
 
-    if (textItem) {
-      textItem.text = `${textItem.text || ""}${text}`;
-    } else {
-      nextContent.push({ type: "text", text });
-    }
+    const nextContent =
+      existingTextIndex >= 0
+        ? message.content.map((item, i) =>
+            i === existingTextIndex
+              ? { ...item, text: `${item.text || ""}${text}` }
+              : item,
+          )
+        : [...message.content, { type: "text" as const, text }];
 
     return {
       ...message,
