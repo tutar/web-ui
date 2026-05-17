@@ -7,7 +7,7 @@
 import { useState, useCallback, useEffect } from 'react';
 
 const API_BASE_URL = (
-  import.meta.env.VITE_MANAGED_AGENT_API_BASE_URL || 'http://127.0.0.1:3000'
+  import.meta.env.VITE_MANAGED_AGENT_API_BASE_URL || 'http://127.0.0.1:4173'
 ).replace(/\/$/, '');
 
 export interface SessionListItem {
