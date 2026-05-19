@@ -127,7 +127,20 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 				sessionName: data.sessionName,
 				status: data.status,
 			});
-			setMessages(normalizeSessionEntries(data.entries || []));
+			setMessages((prev) => {
+				const normalizedEntries = normalizeSessionEntries(data.entries || []);
+
+				/**
+				 * A just-created session can briefly return an empty running snapshot
+				 * before the transcript file is readable. Keep the live in-memory
+				 * conversation until the server can return a non-empty transcript.
+				 */
+				if (data.status === "running" && normalizedEntries.length === 0 && prev.length > 0) {
+					return prev;
+				}
+
+				return normalizedEntries;
+			});
 		} catch (error) {
 			if (fetchRequestIdRef.current !== requestId) {
 				return;
