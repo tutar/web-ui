@@ -1,14 +1,51 @@
-import { Check, ChevronDown, ChevronRight, Copy, ThumbsDown, ThumbsUp, X } from "lucide-react";
+/**
+ * Renders the assistant's formal reply alongside its optional process timeline.
+ *
+ * The process header shows lifecycle state for the secondary process stream,
+ * while the markdown body renders the primary reply as soon as text deltas
+ * arrive.
+ */
+
+import { Check, ChevronDown, ChevronRight, Copy, LoaderCircle, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
+import type { ProcessStatus, ProcessStep as ProcessStepModel } from "../../hooks/chat-message-state";
 import { cn } from "../../lib/utils";
 import { ProcessStep } from "./ProcessStep";
 
-export function AgentMessage({ message }: { message: any }) {
+type MergedToolStep = Extract<ProcessStepModel, { type: "tool_call" }> & {
+	resultStep?: Extract<ProcessStepModel, { type: "tool_result" }>;
+};
+
+type DisplayProcessStep = Exclude<ProcessStepModel, { type: "tool_call" }> | MergedToolStep;
+
+type AgentMessageViewModel = {
+	content: string;
+	processSteps?: ProcessStepModel[];
+	processStatus?: ProcessStatus | null;
+};
+
+const getProcessStatusLabel = (
+	processStatus: ProcessStatus | null | undefined,
+	t: ReturnType<typeof useTranslation>["t"],
+) => {
+	switch (processStatus) {
+		case "working":
+			return t("chat.processWorking", "working");
+		case "completed":
+			return t("chat.processCompleted", "completed");
+		case "stopped":
+			return t("chat.processStopped", "stopped");
+		default:
+			return "";
+	}
+};
+
+export function AgentMessage({ message }: { message: AgentMessageViewModel }) {
 	const { t } = useTranslation();
 	const [showProcess, setShowProcess] = useState(false);
 	const [copied, setCopied] = useState(false);
@@ -41,8 +78,8 @@ export function AgentMessage({ message }: { message: any }) {
 	};
 
 	const processSteps = message.processSteps || [];
-	const mergedSteps: any[] = [];
-	let currentToolCall: any = null;
+	const mergedSteps: DisplayProcessStep[] = [];
+	let currentToolCall: MergedToolStep | null = null;
 
 	for (const step of processSteps) {
 		if (step.type === "tool_call") {
@@ -57,23 +94,38 @@ export function AgentMessage({ message }: { message: any }) {
 		}
 	}
 
+	const processStatusLabel = getProcessStatusLabel(message.processStatus, t);
+	const hasProcessHeader = processStatusLabel.length > 0;
+
 	return (
 		<div className="flex flex-col gap-3 w-full">
-			{processSteps.length > 0 && (
+			{hasProcessHeader && (
 				<div className="flex flex-col gap-2">
 					<button
 						onClick={() => setShowProcess(!showProcess)}
+						aria-label={
+							showProcess
+								? t("chat.collapseProcess", "Collapse process")
+								: t("chat.expandProcess", "Expand process")
+						}
+						title={
+							showProcess
+								? t("chat.collapseProcess", "Collapse process")
+								: t("chat.expandProcess", "Expand process")
+						}
 						className="flex items-center gap-1.5 text-xs text-theme-text-secondary hover:text-theme-text transition-colors self-start px-2 py-1 rounded bg-theme-surface hover:bg-theme-surface-hover border border-theme-border"
 					>
-						{showProcess ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+						{message.processStatus === "working" && <LoaderCircle className="w-3.5 h-3.5 animate-spin" />}
 						<span className="opacity-80">
-							{showProcess ? t("chat.hideProcess") : t("chat.showProcess")} ({mergedSteps.length})
+							{processStatusLabel} ({mergedSteps.length})
 						</span>
+						{processSteps.length > 0 &&
+							(showProcess ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />)}
 					</button>
 
-					{showProcess && (
+					{showProcess && processSteps.length > 0 && (
 						<div className="flex flex-col gap-2 pl-2 border-l-2 border-theme-border/50 ml-2 py-1">
-							{mergedSteps.map((step: any) => (
+							{mergedSteps.map((step) => (
 								<ProcessStep key={step.id} step={step} />
 							))}
 						</div>
@@ -81,7 +133,7 @@ export function AgentMessage({ message }: { message: any }) {
 				</div>
 			)}
 
-			{message.content && (
+			{message.content.length > 0 && (
 				<div className="flex flex-col gap-2">
 					<div className="prose prose-sm max-w-none w-full overflow-x-auto">
 						<Markdown

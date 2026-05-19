@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { AgentMessage } from "../components/chat/AgentMessage";
 import { SUB_AGENTS } from "../data/dummy";
+import type { MessageEntry } from "../hooks/chat-message-state";
 import { useChatSession } from "../hooks/useChatSession";
 import { cn } from "../lib/utils";
 
@@ -123,6 +124,9 @@ export function ChatPage() {
 	const [isRecording, setIsRecording] = useState(false);
 	const { t } = useTranslation();
 	const messagesEndRef = React.useRef<HTMLDivElement>(null);
+	const hasWorkingAssistant = messages.some(
+		(message) => message.messageType === "assistant" && message.processStatus === "working",
+	);
 
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -210,7 +214,7 @@ export function ChatPage() {
 							</p>
 						</div>
 					) : (
-						messages.map((msg) => {
+						messages.map((msg: MessageEntry) => {
 							const textContent = msg.content.find((c) => c.type === "text")?.text || "";
 							const isUser = msg.messageType === "user";
 							return (
@@ -238,7 +242,11 @@ export function ChatPage() {
 											</div>
 											<div className="flex flex-col gap-2 w-full min-w-0">
 												<AgentMessage
-													message={{ content: textContent, processSteps: msg.processSteps || [] }}
+													message={{
+														content: textContent,
+														processSteps: msg.processSteps || [],
+														processStatus: msg.processStatus,
+													}}
 												/>
 											</div>
 										</div>
@@ -249,6 +257,7 @@ export function ChatPage() {
 					)}
 
 					{session?.status === "running" &&
+						!hasWorkingAssistant &&
 						messages.length > 0 &&
 						messages[messages.length - 1].messageType === "user" && (
 							<div className="flex w-full justify-start">
@@ -272,7 +281,7 @@ export function ChatPage() {
 									</div>
 									<div className="flex flex-col gap-2 justify-center">
 										<div className="bg-theme-surface-hover text-theme-text-muted px-4 py-2.5 rounded-2xl rounded-tl-sm text-sm opacity-70 animate-pulse">
-											{t("chat.typing", "Agent is thinking...")}
+											{t("chat.processWorking", "working")}...
 										</div>
 									</div>
 								</div>

@@ -88,8 +88,11 @@ export default {
 		stepToolCall: "Tool Call",
 		stepToolResult: "Tool Result",
 		stepToolCallPayload: "Payload",
-		showProcess: "Show thinking process",
-		hideProcess: "Hide thinking process",
+		processWorking: "working",
+		processCompleted: "completed",
+		processStopped: "stopped",
+		expandProcess: "Expand process",
+		collapseProcess: "Collapse process",
 	},
 	manage: {
 		skillsTitle: "Skills Management",

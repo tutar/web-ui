@@ -87,8 +87,11 @@ export default {
 		stepToolCall: "工具调用",
 		stepToolResult: "工具结果",
 		stepToolCallPayload: "参数",
-		showProcess: "查看思考过程",
-		hideProcess: "隐藏思考过程",
+		processWorking: "工作中",
+		processCompleted: "已完成",
+		processStopped: "已停止",
+		expandProcess: "展开过程",
+		collapseProcess: "收起过程",
 	},
 	manage: {
 		skillsTitle: "技能管理",

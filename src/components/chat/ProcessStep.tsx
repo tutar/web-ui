@@ -1,8 +1,26 @@
+/**
+ * Present one normalized process step within an assistant's expandable
+ * work-process timeline.
+ */
+
 import { Brain, ChevronDown, ChevronRight, Terminal, Wrench } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { ProcessStep as ProcessStepModel } from "../../hooks/chat-message-state";
 
-export function ProcessStep({ step }: { step: any }) {
+type DisplayProcessStep =
+	| ProcessStepModel
+	| (Extract<ProcessStepModel, { type: "tool_call" }> & {
+			resultStep?: Extract<ProcessStepModel, { type: "tool_result" }>;
+	  });
+
+const isMergedToolStep = (
+	step: DisplayProcessStep,
+): step is Extract<ProcessStepModel, { type: "tool_call" }> & {
+	resultStep?: Extract<ProcessStepModel, { type: "tool_result" }>;
+} => step.type === "tool_call";
+
+export function ProcessStep({ step }: { step: DisplayProcessStep }) {
 	const [isExpanded, setIsExpanded] = useState(false);
 	const { t } = useTranslation();
 
@@ -20,16 +38,19 @@ export function ProcessStep({ step }: { step: any }) {
 	};
 
 	const getTitle = () => {
-		if (step.type === "reasoning") return t("chat.stepReasoning");
-		if (step.type === "tool_call") {
-			const parts = (step.title || "").split(":");
-			if (parts.length > 1) {
-				return `${t("chat.stepToolCall")}: ${parts[1].trim()}`;
+		switch (step.type) {
+			case "reasoning":
+				return t("chat.stepReasoning");
+			case "tool_call": {
+				const parts = (step.title || "").split(":");
+				if (parts.length > 1) {
+					return `${t("chat.stepToolCall")}: ${parts[1].trim()}`;
+				}
+				return t("chat.stepToolCall");
 			}
-			return t("chat.stepToolCall");
+			case "tool_result":
+				return t("chat.stepToolResult");
 		}
-		if (step.type === "tool_result") return t("chat.stepToolResult");
-		return step.title;
 	};
 
 	return (
@@ -55,7 +76,7 @@ export function ProcessStep({ step }: { step: any }) {
 						</div>
 						{step.content}
 					</div>
-					{step.resultStep && (
+					{isMergedToolStep(step) && step.resultStep && (
 						<div className="p-3 bg-theme-surface-hover/10 font-mono text-theme-text-secondary overflow-x-auto whitespace-pre-wrap text-[11px] leading-relaxed border-l-2 border-l-green-500/50">
 							<div className="text-[10px] text-theme-text-muted mb-1.5 uppercase font-sans tracking-wider flex items-center gap-1.5">
 								<Terminal className="w-3 h-3 text-green-500/80" />

@@ -12,58 +12,15 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-base-url";
-
-type ToolCallStatus = "started" | "completed" | "error";
-
-type ProcessStep =
-	| {
-			id: string;
-			type: "reasoning";
-			content: string;
-	  }
-	| {
-			id: string;
-			type: "tool_call";
-			title: string;
-			content: string;
-			status: ToolCallStatus;
-	  }
-	| {
-			id: string;
-			type: "tool_result";
-			title: string;
-			content: string;
-			status: "completed" | "error";
-	  };
-
-export interface MessageContentItem {
-	type: "text" | "image" | "video" | "tool_call";
-	text?: string;
-	url?: string;
-	toolCallId?: string;
-	toolName?: string;
-	status?: ToolCallStatus;
-	arguments?: string;
-	result?: string;
-	error?: string;
-}
-
-export interface MessageEntry {
-	id: string;
-	parentId: string | null;
-	createdAt: string;
-	messageType: "user" | "assistant";
-	content: MessageContentItem[];
-	processSteps?: ProcessStep[];
-}
-
-type SessionSnapshotEntry = {
-	id: string;
-	parentId: string | null;
-	createdAt: string;
-	messageType: "user" | "process" | "assistant";
-	content: MessageContentItem[];
-};
+import {
+	appendProcessStepToPlaceholder,
+	attachDeltaToAssistant,
+	type MessageEntry,
+	normalizeSessionEntries,
+	type SessionSnapshotEntry,
+	stopLatestWorkingAssistant,
+	updateAssistantProcessStatus,
+} from "./chat-message-state";
 
 type SessionSnapshot = {
 	sessionId: string;
@@ -82,192 +39,6 @@ const API_BASE_URL = getApiBaseUrl();
 
 const buildSessionsUrl = (sessionId: string) => {
 	return `${API_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`;
-};
-
-const mapProcessContentToSteps = (content: MessageContentItem[]): ProcessStep[] => {
-	return content.flatMap((item) => {
-		if (item.type === "text" && item.text) {
-			return [
-				{
-					id: `reasoning_${Math.random().toString(36).slice(2)}`,
-					type: "reasoning" as const,
-					content: item.text,
-				},
-			];
-		}
-
-		if (item.type !== "tool_call" || !item.toolCallId || !item.toolName || !item.status) {
-			return [];
-		}
-
-		const steps: ProcessStep[] = [
-			{
-				id: item.toolCallId,
-				type: "tool_call",
-				title: `Tool: ${item.toolName}`,
-				content: item.arguments || "{}",
-				status: item.status,
-			},
-		];
-
-		if (item.status === "completed" && item.result) {
-			steps.push({
-				id: `${item.toolCallId}_result`,
-				type: "tool_result",
-				title: `Result: ${item.toolName}`,
-				content: item.result,
-				status: "completed",
-			});
-		}
-
-		if (item.status === "error" && item.error) {
-			steps.push({
-				id: `${item.toolCallId}_error`,
-				type: "tool_result",
-				title: `Error: ${item.toolName}`,
-				content: item.error,
-				status: "error",
-			});
-		}
-
-		return steps;
-	});
-};
-
-const normalizeSessionEntries = (entries: SessionSnapshotEntry[]): MessageEntry[] => {
-	const processEntryById = new Map(
-		entries.filter((entry) => entry.messageType === "process").map((entry) => [entry.id, entry] as const),
-	);
-
-	return entries.reduce<MessageEntry[]>((normalizedEntries, entry) => {
-		if (entry.messageType === "user") {
-			normalizedEntries.push({
-				id: entry.id,
-				parentId: entry.parentId,
-				createdAt: entry.createdAt,
-				messageType: "user",
-				content: entry.content,
-			});
-			return normalizedEntries;
-		}
-
-		if (entry.messageType === "assistant") {
-			const processEntry = entry.parentId ? processEntryById.get(entry.parentId) : undefined;
-
-			normalizedEntries.push({
-				id: entry.id,
-				parentId: entry.parentId,
-				createdAt: entry.createdAt,
-				messageType: "assistant",
-				content: entry.content,
-				processSteps: processEntry ? mapProcessContentToSteps(processEntry.content) : [],
-			});
-		}
-
-		return normalizedEntries;
-	}, []);
-};
-
-const createPlaceholderAssistant = (entryId: string, parentId: string, createdAt: string): MessageEntry => {
-	return {
-		id: entryId,
-		parentId,
-		createdAt,
-		messageType: "assistant",
-		content: [],
-		processSteps: [],
-	};
-};
-
-const appendProcessStepToPlaceholder = (
-	messages: MessageEntry[],
-	entryId: string,
-	parentId: string,
-	step: ProcessStep,
-): MessageEntry[] => {
-	let found = false;
-
-	const nextMessages = messages.map((message) => {
-		if (message.id !== entryId) {
-			return message;
-		}
-
-		found = true;
-		return {
-			...message,
-			processSteps: [...(message.processSteps || []), step],
-		};
-	});
-
-	if (found) {
-		return nextMessages;
-	}
-
-	return [
-		...messages,
-		{
-			...createPlaceholderAssistant(entryId, parentId, new Date().toISOString()),
-			processSteps: [step],
-		},
-	];
-};
-
-const attachDeltaToAssistant = (
-	messages: MessageEntry[],
-	entryId: string,
-	parentId: string,
-	text: string,
-): MessageEntry[] => {
-	let placeholderSteps: ProcessStep[] = [];
-	let foundAssistant = false;
-
-	const withoutPlaceholder = messages.filter((message) => {
-		if (message.id === parentId) {
-			placeholderSteps = message.processSteps || [];
-			return false;
-		}
-
-		return true;
-	});
-
-	const nextMessages = withoutPlaceholder.map((message) => {
-		if (message.id !== entryId) {
-			return message;
-		}
-
-		foundAssistant = true;
-		const existingTextIndex = message.content.findIndex((item) => item.type === "text");
-
-		const nextContent =
-			existingTextIndex >= 0
-				? message.content.map((item, i) =>
-						i === existingTextIndex ? { ...item, text: `${item.text || ""}${text}` } : item,
-					)
-				: [...message.content, { type: "text" as const, text }];
-
-		return {
-			...message,
-			content: nextContent,
-			processSteps:
-				message.processSteps && message.processSteps.length > 0 ? message.processSteps : placeholderSteps,
-		};
-	});
-
-	if (foundAssistant) {
-		return nextMessages;
-	}
-
-	return [
-		...nextMessages,
-		{
-			id: entryId,
-			parentId,
-			createdAt: new Date().toISOString(),
-			messageType: "assistant",
-			content: [{ type: "text", text }],
-			processSteps: placeholderSteps,
-		},
-	];
 };
 
 const buildStreamUrl = (sessionId?: string | null) => {
@@ -448,14 +219,17 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 					);
 					break;
 				case "final.output.completed":
+					setMessages((prev) => updateAssistantProcessStatus(prev, String(data.entryId), "completed"));
 					setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
 					setIsLoading(false);
 					break;
 				case "run.failed":
+					setMessages((prev) => stopLatestWorkingAssistant(prev));
 					setSession((prev) => (prev ? { ...prev, status: "error" } : null));
 					setIsLoading(false);
 					break;
 				case "run.cancelled":
+					setMessages((prev) => stopLatestWorkingAssistant(prev));
 					setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
 					setIsLoading(false);
 					break;
