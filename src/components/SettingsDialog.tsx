@@ -1,19 +1,98 @@
-import { Cpu, Edit2, Settings as GeneralIcon, Key, Moon, Plus, Sun, Trash2 } from "lucide-react";
+import { Cpu, Edit2, ExternalLink, Key, Loader2, Moon, Plus, Sun, Trash2, Unplug } from "lucide-react";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AVAILABLE_PROVIDERS, type ModelProviderConfig, useModelConfigs } from "../hooks/useModelConfigs";
+import { useModelConfigs } from "../hooks/useModelConfigs";
 import { cn } from "../lib/utils";
+import type { LlmProviderConfig, LlmProviderOAuthFlow, LlmProviderTypeCatalogItem } from "../types";
 import { CustomSelect } from "./CustomSelect";
 
+type EditableProviderForm = {
+	providerConfigId?: string;
+	providerType: string;
+	displayName: string;
+	baseUrl: string;
+	availableModelsText: string;
+	defaultModelId: string;
+	fastModelId: string;
+	balancedModelId: string;
+	strongModelId: string;
+	defaultThinkingLevel: string;
+	apiKey: string;
+	headersText: string;
+	enabled: boolean;
+};
+
+const createFormFromCatalog = (catalogItem: LlmProviderTypeCatalogItem): EditableProviderForm => {
+	return {
+		providerType: catalogItem.providerType,
+		displayName: catalogItem.displayName,
+		baseUrl: "",
+		availableModelsText: catalogItem.defaultModels.map((model) => model.modelId).join(", "),
+		defaultModelId: catalogItem.defaultModels[0]?.modelId ?? "",
+		fastModelId: catalogItem.defaultCapabilityModelIds.fast ?? "",
+		balancedModelId: catalogItem.defaultCapabilityModelIds.balanced ?? catalogItem.defaultModels[0]?.modelId ?? "",
+		strongModelId: catalogItem.defaultCapabilityModelIds.strong ?? catalogItem.defaultModels[0]?.modelId ?? "",
+		defaultThinkingLevel: catalogItem.defaultThinkingLevel,
+		apiKey: "",
+		headersText: "",
+		enabled: true,
+	};
+};
+
+const createFormFromConfig = (config: LlmProviderConfig): EditableProviderForm => {
+	return {
+		providerConfigId: config.providerConfigId,
+		providerType: config.providerType,
+		displayName: config.displayName,
+		baseUrl: config.baseUrl ?? "",
+		availableModelsText: config.availableModels.map((model) => model.modelId).join(", "),
+		defaultModelId: config.defaultModelId,
+		fastModelId: config.fastModelId ?? "",
+		balancedModelId: config.balancedModelId ?? "",
+		strongModelId: config.strongModelId ?? "",
+		defaultThinkingLevel: config.defaultThinkingLevel,
+		apiKey: "",
+		headersText: Object.keys(config.headers).length > 0 ? JSON.stringify(config.headers, null, 2) : "",
+		enabled: config.enabled,
+	};
+};
+
+const parseHeaders = (headersText: string) => {
+	if (headersText.trim().length === 0) {
+		return undefined;
+	}
+
+	const parsedHeaders = JSON.parse(headersText) as Record<string, string>;
+	return parsedHeaders;
+};
+
+/**
+ * Settings dialog for theme/language plus per-user LLM provider registry CRUD.
+ *
+ * The models tab is intentionally backend-backed so browser settings, API
+ * execution, and harness runtime all share one durable provider truth.
+ */
 export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
 	const { t, i18n } = useTranslation();
 	const [theme, setTheme] = useState<"dark" | "light">("dark");
 	const [activeTab, setActiveTab] = useState<"general" | "models">("general");
-	const { configs, setConfigs } = useModelConfigs();
-
-	const [editingConfig, setEditingConfig] = useState<ModelProviderConfig | null>(null);
+	const {
+		providerTypes,
+		configs,
+		isLoading,
+		refresh,
+		createConfig,
+		updateConfig,
+		deleteConfig,
+		startOAuthFlow,
+		getOAuthFlow,
+		deleteOAuthCredential,
+	} = useModelConfigs();
+	const [editingConfig, setEditingConfig] = useState<EditableProviderForm | null>(null);
 	const [isFormOpen, setIsFormOpen] = useState(false);
+	const [isSaving, setIsSaving] = useState(false);
+	const [oauthFlows, setOauthFlows] = useState<Record<string, LlmProviderOAuthFlow>>({});
 
 	useEffect(() => {
 		if (document.documentElement.classList.contains("light")) {
@@ -22,6 +101,11 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 			setTheme("dark");
 		}
 	}, []);
+
+	const selectedProviderType = useMemo(
+		() => providerTypes.find((providerType) => providerType.providerType === editingConfig?.providerType),
+		[editingConfig?.providerType, providerTypes],
+	);
 
 	const handleThemeChange = (newTheme: "dark" | "light") => {
 		setTheme(newTheme);
@@ -32,40 +116,186 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 		}
 	};
 
-	const resetForm = () => {
+	const closeForm = () => {
 		setEditingConfig(null);
 		setIsFormOpen(false);
 	};
 
-	const handleSaveConfig = (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!editingConfig) return;
-
-		if (configs.find((c) => c.id === editingConfig.id)) {
-			setConfigs(configs.map((c) => (c.id === editingConfig.id ? editingConfig : c)));
-		} else {
-			setConfigs([...configs, editingConfig]);
+	const openCreateForm = () => {
+		if (providerTypes.length === 0) {
+			return;
 		}
-		resetForm();
-	};
 
-	const handleCreateNew = () => {
-		setEditingConfig({
-			id: Math.random().toString(36).substring(2, 9),
-			providerType: AVAILABLE_PROVIDERS[0].id,
-			name: AVAILABLE_PROVIDERS[0].name,
-			models: AVAILABLE_PROVIDERS[0].defaultModels,
-			apiKey: "",
-		});
+		setEditingConfig(createFormFromCatalog(providerTypes[0]));
 		setIsFormOpen(true);
 	};
 
-	if (!isOpen) return null;
+	const openEditForm = (config: LlmProviderConfig) => {
+		setEditingConfig(createFormFromConfig(config));
+		setIsFormOpen(true);
+	};
+
+	const handleProviderTypeChange = (providerType: string) => {
+		if (!editingConfig) {
+			return;
+		}
+
+		const providerCatalogItem = providerTypes.find((item) => item.providerType === providerType);
+		if (!providerCatalogItem) {
+			return;
+		}
+
+		setEditingConfig({
+			...editingConfig,
+			providerType,
+			displayName: providerCatalogItem.displayName,
+			availableModelsText: providerCatalogItem.defaultModels.map((model) => model.modelId).join(", "),
+			defaultModelId: providerCatalogItem.defaultModels[0]?.modelId ?? "",
+			fastModelId: providerCatalogItem.defaultCapabilityModelIds.fast ?? "",
+			balancedModelId:
+				providerCatalogItem.defaultCapabilityModelIds.balanced ??
+				providerCatalogItem.defaultModels[0]?.modelId ??
+				"",
+			strongModelId:
+				providerCatalogItem.defaultCapabilityModelIds.strong ?? providerCatalogItem.defaultModels[0]?.modelId ?? "",
+			defaultThinkingLevel: providerCatalogItem.defaultThinkingLevel,
+			baseUrl: providerCatalogItem.baseUrlRequired ? editingConfig.baseUrl : "",
+			apiKey: "",
+		});
+	};
+
+	const handleSaveConfig = async (event: React.FormEvent) => {
+		event.preventDefault();
+		if (!editingConfig) {
+			return;
+		}
+
+		setIsSaving(true);
+		try {
+			const payload = {
+				providerType: editingConfig.providerType,
+				displayName: editingConfig.displayName,
+				baseUrl: editingConfig.baseUrl || undefined,
+				headers: parseHeaders(editingConfig.headersText),
+				availableModels: editingConfig.availableModelsText
+					.split(",")
+					.map((modelId) => modelId.trim())
+					.filter((modelId) => modelId.length > 0),
+				defaultModelId: editingConfig.defaultModelId || undefined,
+				fastModelId: editingConfig.fastModelId || undefined,
+				balancedModelId: editingConfig.balancedModelId || undefined,
+				strongModelId: editingConfig.strongModelId || undefined,
+				defaultThinkingLevel: editingConfig.defaultThinkingLevel || undefined,
+				enabled: editingConfig.enabled,
+				apiKey: editingConfig.apiKey || undefined,
+			};
+
+			if (editingConfig.providerConfigId) {
+				await updateConfig(editingConfig.providerConfigId, payload);
+			} else {
+				await createConfig(payload);
+			}
+
+			closeForm();
+		} catch (error) {
+			window.alert(error instanceof Error ? error.message : "Failed to save provider config");
+		} finally {
+			setIsSaving(false);
+		}
+	};
+
+	const handleDeleteConfig = async (providerConfigId: string) => {
+		if (!window.confirm(t("settings.deleteProviderConfirm"))) {
+			return;
+		}
+
+		try {
+			await deleteConfig(providerConfigId);
+		} catch (error) {
+			window.alert(error instanceof Error ? error.message : "Failed to delete provider config");
+		}
+	};
+
+	const pollOAuthFlow = async (providerConfigId: string, flowId: string) => {
+		const nextFlow = await getOAuthFlow(providerConfigId, flowId);
+		setOauthFlows((currentFlows) => ({
+			...currentFlows,
+			[providerConfigId]: nextFlow,
+		}));
+
+		if (nextFlow.status === "pending") {
+			window.setTimeout(() => {
+				void pollOAuthFlow(providerConfigId, flowId);
+			}, 1500);
+			return;
+		}
+
+		if (nextFlow.status === "completed") {
+			await refresh();
+			return;
+		}
+
+		if (nextFlow.status === "failed") {
+			window.alert(nextFlow.error ?? t("settings.oauthConnectFailed"));
+		}
+	};
+
+	const handleConnectOAuth = async (config: LlmProviderConfig) => {
+		try {
+			const enterpriseUrl =
+				config.providerType === "github-copilot"
+					? (window.prompt(t("settings.githubEnterprisePrompt")) ?? "").trim() || undefined
+					: undefined;
+
+			const startedFlow = await startOAuthFlow(config.providerConfigId, { enterpriseUrl });
+			setOauthFlows((currentFlows) => ({
+				...currentFlows,
+				[config.providerConfigId]: startedFlow,
+			}));
+
+			if (startedFlow.instructions) {
+				window.alert(startedFlow.instructions);
+			}
+
+			const oauthWindow = window.open(
+				startedFlow.authUrl,
+				`oauth-${config.providerConfigId}`,
+				"popup=yes,width=640,height=720",
+			);
+			if (!oauthWindow) {
+				window.alert(`${t("settings.oauthPopupBlocked")}\n${startedFlow.authUrl}`);
+			}
+
+			await pollOAuthFlow(config.providerConfigId, startedFlow.flowId);
+		} catch (error) {
+			window.alert(error instanceof Error ? error.message : t("settings.oauthConnectFailed"));
+		}
+	};
+
+	const handleDisconnectOAuth = async (config: LlmProviderConfig) => {
+		if (!window.confirm(t("settings.oauthDisconnectConfirm"))) {
+			return;
+		}
+
+		try {
+			await deleteOAuthCredential(config.providerConfigId);
+			setOauthFlows((currentFlows) => {
+				const nextFlows = { ...currentFlows };
+				delete nextFlows[config.providerConfigId];
+				return nextFlows;
+			});
+		} catch (error) {
+			window.alert(error instanceof Error ? error.message : t("settings.oauthDisconnectFailed"));
+		}
+	};
+
+	if (!isOpen) {
+		return null;
+	}
 
 	return (
 		<div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-			<div className="bg-theme-surface border border-theme-border rounded-xl w-full max-w-3xl shadow-2xl overflow-hidden text-theme-text transition-colors flex flex-col md:flex-row h-[80vh] max-h-[600px]">
-				{/* Sidebar */}
+			<div className="bg-theme-surface border border-theme-border rounded-xl w-full max-w-4xl shadow-2xl overflow-hidden text-theme-text transition-colors flex flex-col md:flex-row h-[80vh] max-h-[680px]">
 				<div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-theme-border bg-theme-surface-hover/50 flex flex-col">
 					<div className="px-6 py-5 border-b border-theme-border">
 						<h2 className="text-sm font-bold uppercase tracking-widest text-theme-accent">
@@ -82,7 +312,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 									: "text-theme-text-secondary hover:text-theme-text hover:bg-theme-surface-hover",
 							)}
 						>
-							<GeneralIcon className="w-4 h-4" />
+							<Moon className="w-4 h-4" />
 							{t("settings.general")}
 						</button>
 						<button
@@ -100,7 +330,6 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 					</div>
 				</div>
 
-				{/* Content */}
 				<div className="flex-1 flex flex-col overflow-hidden bg-theme-base">
 					<div className="flex justify-end p-4 border-b border-theme-border">
 						<button
@@ -108,12 +337,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 							className="text-theme-text-secondary hover:text-theme-text transition-colors rounded p-1 hover:bg-theme-surface-active"
 						>
 							<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="2"
-									d="M6 18L18 6M6 6l12 12"
-								></path>
+								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
 							</svg>
 						</button>
 					</div>
@@ -187,7 +411,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 						)}
 
 						{activeTab === "models" && (
-							<div className="max-w-2xl space-y-8 pb-8">
+							<div className="max-w-3xl space-y-8 pb-8">
 								<div>
 									<div className="flex items-center justify-between mb-2 gap-4">
 										<h3 className="text-lg font-serif italic text-theme-accent">
@@ -195,7 +419,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 										</h3>
 										{!isFormOpen && (
 											<button
-												onClick={handleCreateNew}
+												onClick={openCreateForm}
 												className="flex items-center gap-2 px-4 py-2 bg-theme-accent text-theme-base rounded-lg text-sm font-medium hover:brightness-110 transition-all flex-shrink-0"
 											>
 												<Plus className="w-4 h-4" />
@@ -206,66 +430,185 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 									<p className="text-sm text-theme-text-secondary">{t("settings.modelManagementDesc")}</p>
 								</div>
 
-								{isFormOpen && editingConfig ? (
+								{isFormOpen && editingConfig && selectedProviderType ? (
 									<form
-										onSubmit={handleSaveConfig}
-										className="bg-theme-surface border border-theme-border rounded-xl p-5 space-y-4 shadow-sm animate-in fade-in slide-in-from-top-4"
+										onSubmit={(event) => void handleSaveConfig(event)}
+										className="bg-theme-surface border border-theme-border rounded-xl p-5 space-y-4 shadow-sm"
 									>
-										<div className="flex items-center gap-3 pb-4 border-b border-theme-border/50">
-											<div className="w-8 h-8 rounded bg-theme-accent/10 flex items-center justify-center">
-												<Cpu className="w-4 h-4 text-theme-accent" />
-											</div>
-											<h4 className="font-medium text-theme-text flex-1">
-												{configs.find((c) => c.id === editingConfig.id)
-													? t("settings.editProvider")
-													: t("settings.addProvider")}
-											</h4>
-										</div>
-
-										<div className="space-y-4">
+										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 											<div className="space-y-2">
 												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
 													{t("settings.provider")}
 												</label>
 												<CustomSelect
 													value={editingConfig.providerType}
-													onChange={(val) => {
-														const newProvider = AVAILABLE_PROVIDERS.find((p) => p.id === val);
-														if (newProvider) {
-															setEditingConfig({
-																...editingConfig,
-																providerType: newProvider.id,
-																name: newProvider.name,
-																models: newProvider.defaultModels,
-															});
-														}
-													}}
-													className="w-full bg-theme-base border border-theme-border focus:border-theme-accent/50 rounded-lg px-4 py-2.5 text-sm outline-none text-theme-text transition-colors"
-													options={AVAILABLE_PROVIDERS.map((p) => ({
-														value: p.id,
-														label: p.name,
+													onChange={handleProviderTypeChange}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+													options={providerTypes.map((providerType) => ({
+														value: providerType.providerType,
+														label: providerType.displayName,
 													}))}
 												/>
 											</div>
-
 											<div className="space-y-2">
 												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.availableModels")}
+													{t("settings.displayName")}
 												</label>
 												<input
 													type="text"
-													value={editingConfig.models}
-													onChange={(e) =>
-														setEditingConfig({
-															...editingConfig,
-															models: e.target.value,
-														})
+													value={editingConfig.displayName}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, displayName: event.target.value }
+																: currentConfig,
+														)
 													}
-													className="w-full bg-theme-base border border-theme-border focus:border-theme-accent/50 rounded-lg px-4 py-2.5 text-sm outline-none text-theme-text transition-colors placeholder:text-theme-text-muted"
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
 													required
 												/>
 											</div>
+										</div>
 
+										{selectedProviderType.helpText && (
+											<p className="text-xs text-theme-text-secondary">{selectedProviderType.helpText}</p>
+										)}
+
+										{selectedProviderType.supportsCustomBaseUrl && (
+											<div className="space-y-2">
+												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+													{t("settings.baseUrl")}
+												</label>
+												<input
+													type="text"
+													value={editingConfig.baseUrl}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, baseUrl: event.target.value }
+																: currentConfig,
+														)
+													}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+													placeholder={
+														selectedProviderType.baseUrlRequired ? "https://..." : t("settings.optional")
+													}
+												/>
+											</div>
+										)}
+
+										<div className="space-y-2">
+											<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+												{t("settings.availableModels")}
+											</label>
+											<input
+												type="text"
+												value={editingConfig.availableModelsText}
+												onChange={(event) =>
+													setEditingConfig((currentConfig) =>
+														currentConfig
+															? { ...currentConfig, availableModelsText: event.target.value }
+															: currentConfig,
+													)
+												}
+												className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+												required
+											/>
+										</div>
+
+										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+											<div className="space-y-2">
+												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+													{t("settings.defaultModel")}
+												</label>
+												<input
+													type="text"
+													value={editingConfig.defaultModelId}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, defaultModelId: event.target.value }
+																: currentConfig,
+														)
+													}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+													required
+												/>
+											</div>
+											<div className="space-y-2">
+												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+													{t("settings.defaultThinkingLevel")}
+												</label>
+												<input
+													type="text"
+													value={editingConfig.defaultThinkingLevel}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, defaultThinkingLevel: event.target.value }
+																: currentConfig,
+														)
+													}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+												/>
+											</div>
+										</div>
+
+										<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+											<div className="space-y-2">
+												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+													{t("settings.fastModel")}
+												</label>
+												<input
+													type="text"
+													value={editingConfig.fastModelId}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, fastModelId: event.target.value }
+																: currentConfig,
+														)
+													}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+												/>
+											</div>
+											<div className="space-y-2">
+												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+													{t("settings.balancedModel")}
+												</label>
+												<input
+													type="text"
+													value={editingConfig.balancedModelId}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, balancedModelId: event.target.value }
+																: currentConfig,
+														)
+													}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+												/>
+											</div>
+											<div className="space-y-2">
+												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+													{t("settings.strongModel")}
+												</label>
+												<input
+													type="text"
+													value={editingConfig.strongModelId}
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, strongModelId: event.target.value }
+																: currentConfig,
+														)
+													}
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+												/>
+											</div>
+										</div>
+
+										{selectedProviderType.secretFields.includes("apiKey") && (
 											<div className="space-y-2">
 												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary flex items-center gap-1.5">
 													<Key className="w-3 h-3" />
@@ -274,32 +617,75 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 												<input
 													type="password"
 													value={editingConfig.apiKey}
-													onChange={(e) =>
-														setEditingConfig({
-															...editingConfig,
-															apiKey: e.target.value,
-														})
+													onChange={(event) =>
+														setEditingConfig((currentConfig) =>
+															currentConfig
+																? { ...currentConfig, apiKey: event.target.value }
+																: currentConfig,
+														)
 													}
 													placeholder={t("settings.apiKeyPlaceholder")}
-													className="w-full bg-theme-base border border-theme-border focus:border-theme-accent/50 rounded-lg px-4 py-2.5 text-sm outline-none text-theme-text transition-colors placeholder:text-theme-text-muted"
-													required
+													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
 												/>
 											</div>
+										)}
+
+										{selectedProviderType.secretFields.includes("oauthCredential") && (
+											<div className="rounded-lg border border-theme-border bg-theme-base px-4 py-3 text-sm text-theme-text-secondary">
+												{t("settings.oauthManagedByBrowser")}
+											</div>
+										)}
+
+										<div className="space-y-2">
+											<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
+												{t("settings.headersJson")}
+											</label>
+											<textarea
+												value={editingConfig.headersText}
+												onChange={(event) =>
+													setEditingConfig((currentConfig) =>
+														currentConfig
+															? { ...currentConfig, headersText: event.target.value }
+															: currentConfig,
+													)
+												}
+												className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text min-h-28"
+												placeholder='{"x-api-key":"..."}'
+											/>
+										</div>
+
+										<div className="flex items-center gap-3">
+											<input
+												id="provider-enabled"
+												type="checkbox"
+												checked={editingConfig.enabled}
+												onChange={(event) =>
+													setEditingConfig((currentConfig) =>
+														currentConfig
+															? { ...currentConfig, enabled: event.target.checked }
+															: currentConfig,
+													)
+												}
+											/>
+											<label htmlFor="provider-enabled" className="text-sm text-theme-text-secondary">
+												{t("settings.enabled")}
+											</label>
 										</div>
 
 										<div className="flex gap-3 justify-end pt-4 border-t border-theme-border/50">
 											<button
 												type="button"
-												onClick={resetForm}
+												onClick={closeForm}
 												className="px-4 py-2 rounded-lg text-sm font-medium text-theme-text-secondary hover:text-theme-text hover:bg-theme-surface-hover transition-colors"
 											>
 												{t("settings.cancel")}
 											</button>
 											<button
 												type="submit"
-												className="px-4 py-2 rounded-lg text-sm font-medium bg-theme-accent text-theme-base hover:brightness-110 transition-colors"
+												disabled={isSaving}
+												className="px-4 py-2 rounded-lg text-sm font-medium bg-theme-accent text-theme-base hover:brightness-110 transition-colors disabled:opacity-60"
 											>
-												{t("settings.save")}
+												{isSaving ? t("settings.saving") : t("settings.save")}
 											</button>
 										</div>
 									</form>
@@ -309,63 +695,97 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 											{t("settings.configuredProviders")}
 										</h4>
 
-										{configs.length === 0 ? (
+										{isLoading ? (
+											<div className="text-sm text-theme-text-secondary">
+												{t("settings.loadingProviders")}
+											</div>
+										) : configs.length === 0 ? (
 											<div className="border border-dashed border-theme-border rounded-xl p-8 flex flex-col items-center justify-center text-center">
 												<Cpu className="w-8 h-8 text-theme-text-secondary/50 mb-3" />
 												<p className="text-sm text-theme-text-secondary">{t("settings.noProviders")}</p>
 											</div>
 										) : (
 											<div className="space-y-3">
-												{configs.map((config) => (
-													<div
-														key={config.id}
-														className="bg-theme-surface border border-theme-border rounded-xl p-4 flex items-center gap-4 group hover:border-theme-accent/30 transition-colors"
-													>
-														<div className="w-10 h-10 rounded-lg bg-theme-surface-active flex items-center justify-center border border-theme-border flex-shrink-0">
-															<Cpu className="w-5 h-5 text-theme-accent/80" />
-														</div>
+												{configs.map((config) => {
+													const oauthFlow = oauthFlows[config.providerConfigId];
+													const isOauthProvider = config.authMode === "oauth";
+													return (
+														<div
+															key={config.providerConfigId}
+															className="bg-theme-surface border border-theme-border rounded-xl p-4 flex items-center gap-4 group hover:border-theme-accent/30 transition-colors"
+														>
+															<div className="w-10 h-10 rounded-lg bg-theme-surface-active flex items-center justify-center border border-theme-border flex-shrink-0">
+																<Cpu className="w-5 h-5 text-theme-accent/80" />
+															</div>
 
-														<div className="flex-1 min-w-0">
-															<h5 className="font-medium text-sm text-theme-text truncate">
-																{config.name}
-															</h5>
-															<p
-																className="text-xs text-theme-text-secondary truncate mt-0.5"
-																title={config.models}
-															>
-																{config.models.split(",").length} models configured
-															</p>
-														</div>
+															<div className="flex-1 min-w-0">
+																<h5 className="font-medium text-sm text-theme-text truncate">
+																	{config.displayName}
+																</h5>
+																<p className="text-xs text-theme-text-secondary truncate mt-0.5">
+																	{config.providerType} · {config.availableModels.length}{" "}
+																	{t("settings.modelsCount")}
+																</p>
+																<p className="text-xs text-theme-text-secondary truncate mt-0.5">
+																	{config.hasStoredCredential
+																		? t("settings.credentialStored")
+																		: t("settings.credentialMissing")}
+																</p>
+																{oauthFlow && (
+																	<p className="text-xs text-theme-text-secondary truncate mt-0.5">
+																		{oauthFlow.status === "pending"
+																			? t("settings.oauthConnecting")
+																			: oauthFlow.status === "completed"
+																				? t("settings.oauthConnected")
+																				: t("settings.oauthConnectFailed")}
+																	</p>
+																)}
+															</div>
 
-														<div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-															<button
-																onClick={() => {
-																	setEditingConfig(config);
-																	setIsFormOpen(true);
-																}}
-																className="p-2 rounded hover:bg-theme-surface-active text-theme-text-secondary hover:text-theme-accent transition-colors"
-																title={t("settings.editProvider")}
-															>
-																<Edit2 className="w-4 h-4" />
-															</button>
-															<button
-																onClick={() => {
-																	if (
-																		window.confirm(
-																			"Are you sure you want to delete this provider configuration?",
-																		)
-																	) {
-																		setConfigs(configs.filter((c) => c.id !== config.id));
-																	}
-																}}
-																className="p-2 rounded hover:bg-theme-surface-active text-theme-text-secondary hover:text-red-500 transition-colors"
-																title={t("settings.deleteProvider")}
-															>
-																<Trash2 className="w-4 h-4" />
-															</button>
+															<div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+																{isOauthProvider && (
+																	<>
+																		<button
+																			onClick={() => void handleConnectOAuth(config)}
+																			className="p-2 rounded hover:bg-theme-surface-active text-theme-text-secondary hover:text-theme-accent transition-colors"
+																			title={t("settings.connectProvider")}
+																			disabled={oauthFlow?.status === "pending"}
+																		>
+																			{oauthFlow?.status === "pending" ? (
+																				<Loader2 className="w-4 h-4 animate-spin" />
+																			) : (
+																				<ExternalLink className="w-4 h-4" />
+																			)}
+																		</button>
+																		{config.hasStoredCredential && (
+																			<button
+																				onClick={() => void handleDisconnectOAuth(config)}
+																				className="p-2 rounded hover:bg-theme-surface-active text-theme-text-secondary hover:text-red-500 transition-colors"
+																				title={t("settings.disconnectProvider")}
+																			>
+																				<Unplug className="w-4 h-4" />
+																			</button>
+																		)}
+																	</>
+																)}
+																<button
+																	onClick={() => openEditForm(config)}
+																	className="p-2 rounded hover:bg-theme-surface-active text-theme-text-secondary hover:text-theme-accent transition-colors"
+																	title={t("settings.editProvider")}
+																>
+																	<Edit2 className="w-4 h-4" />
+																</button>
+																<button
+																	onClick={() => void handleDeleteConfig(config.providerConfigId)}
+																	className="p-2 rounded hover:bg-theme-surface-active text-theme-text-secondary hover:text-red-500 transition-colors"
+																	title={t("settings.deleteProvider")}
+																>
+																	<Trash2 className="w-4 h-4" />
+																</button>
+															</div>
 														</div>
-													</div>
-												))}
+													);
+												})}
 											</div>
 										)}
 									</div>
