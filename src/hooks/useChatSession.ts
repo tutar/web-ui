@@ -295,6 +295,7 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 	const fetchRequestIdRef = useRef(0);
 	const activeStreamIdRef = useRef(0);
 	const currentViewedSessionIdRef = useRef<string | null>(initialSessionId || null);
+	const streamingForSessionRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (initialSessionId === currentViewedSessionIdRef.current) {
@@ -329,6 +330,10 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 	}, [initialSessionId]);
 
 	const fetchSession = useCallback(async (id: string) => {
+		if (streamingForSessionRef.current === id) {
+			return;
+		}
+
 		const requestId = fetchRequestIdRef.current + 1;
 		fetchRequestIdRef.current = requestId;
 
@@ -369,20 +374,21 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 	const handleSSEMessage = useCallback(
 		(event: string, data: Record<string, unknown>) => {
 			switch (event) {
-				case "session.created":
-					currentViewedSessionIdRef.current = String(data.sessionId);
-					setSession({
-						sessionId: String(data.sessionId),
-						sessionName: String(data.sessionName),
-						status: "running",
-					});
-					window.dispatchEvent(new CustomEvent("agentos-session-changed"));
-					onSessionCreated?.(String(data.sessionId));
-					break;
-				case "message.accepted":
-					setMessages((prev) => {
-						const entry = data.entry as SessionSnapshotEntry;
-						const filtered = prev.filter((m) => !m.id.startsWith("optimistic_"));
+			case "session.created":
+				streamingForSessionRef.current = String(data.sessionId);
+				currentViewedSessionIdRef.current = String(data.sessionId);
+				setSession({
+					sessionId: String(data.sessionId),
+					sessionName: String(data.sessionName),
+					status: "running",
+				});
+				window.dispatchEvent(new CustomEvent("agentos-session-changed"));
+				onSessionCreated?.(String(data.sessionId));
+				break;
+			case "message.accepted":
+				setMessages((prev) => {
+					const entry = data.entry as SessionSnapshotEntry;
+					const filtered = prev.filter((m) => !m.id.startsWith("optimistic_"));
 
 						if (filtered.find((message) => message.id === entry.id)) {
 							return filtered;
@@ -447,18 +453,21 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 						attachDeltaToAssistant(prev, String(data.entryId), String(data.parentId), String(data.text || "")),
 					);
 					break;
-				case "final.output.completed":
-					setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
-					setIsLoading(false);
-					break;
-				case "run.failed":
-					setSession((prev) => (prev ? { ...prev, status: "error" } : null));
-					setIsLoading(false);
-					break;
-				case "run.cancelled":
-					setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
-					setIsLoading(false);
-					break;
+			case "final.output.completed":
+				streamingForSessionRef.current = null;
+				setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
+				setIsLoading(false);
+				break;
+			case "run.failed":
+				streamingForSessionRef.current = null;
+				setSession((prev) => (prev ? { ...prev, status: "error" } : null));
+				setIsLoading(false);
+				break;
+			case "run.cancelled":
+				streamingForSessionRef.current = null;
+				setSession((prev) => (prev ? { ...prev, status: "idle" } : null));
+				setIsLoading(false);
+				break;
 				default:
 					break;
 			}
