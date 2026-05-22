@@ -14,13 +14,11 @@ type EditableProviderForm = {
 	baseUrl: string;
 	availableModelsText: string;
 	defaultModelId: string;
-	fastModelId: string;
-	balancedModelId: string;
-	strongModelId: string;
 	defaultThinkingLevel: string;
 	apiKey: string;
 	headersText: string;
 	enabled: boolean;
+	hasStoredCredential: boolean;
 };
 
 const createFormFromCatalog = (catalogItem: LlmProviderTypeCatalogItem): EditableProviderForm => {
@@ -30,13 +28,11 @@ const createFormFromCatalog = (catalogItem: LlmProviderTypeCatalogItem): Editabl
 		baseUrl: "",
 		availableModelsText: catalogItem.defaultModels.map((model) => model.modelId).join(", "),
 		defaultModelId: catalogItem.defaultModels[0]?.modelId ?? "",
-		fastModelId: catalogItem.defaultCapabilityModelIds.fast ?? "",
-		balancedModelId: catalogItem.defaultCapabilityModelIds.balanced ?? catalogItem.defaultModels[0]?.modelId ?? "",
-		strongModelId: catalogItem.defaultCapabilityModelIds.strong ?? catalogItem.defaultModels[0]?.modelId ?? "",
 		defaultThinkingLevel: catalogItem.defaultThinkingLevel,
 		apiKey: "",
 		headersText: "",
 		enabled: true,
+		hasStoredCredential: false,
 	};
 };
 
@@ -48,13 +44,11 @@ const createFormFromConfig = (config: LlmProviderConfig): EditableProviderForm =
 		baseUrl: config.baseUrl ?? "",
 		availableModelsText: config.availableModels.map((model) => model.modelId).join(", "),
 		defaultModelId: config.defaultModelId,
-		fastModelId: config.fastModelId ?? "",
-		balancedModelId: config.balancedModelId ?? "",
-		strongModelId: config.strongModelId ?? "",
 		defaultThinkingLevel: config.defaultThinkingLevel,
 		apiKey: "",
 		headersText: Object.keys(config.headers).length > 0 ? JSON.stringify(config.headers, null, 2) : "",
 		enabled: config.enabled,
+		hasStoredCredential: config.hasStoredCredential,
 	};
 };
 
@@ -106,6 +100,24 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 		() => providerTypes.find((providerType) => providerType.providerType === editingConfig?.providerType),
 		[editingConfig?.providerType, providerTypes],
 	);
+	const apiKeyRequired =
+		selectedProviderType?.secretFields.includes("apiKey") === true && editingConfig?.hasStoredCredential !== true;
+
+	/**
+	 * Renders the compact uppercase field labels used across the settings form.
+	 *
+	 * Required markers are explicit because browser-native `required` validation
+	 * alone does not make the form contract visible before submit.
+	 */
+	const renderFieldLabel = (label: string, isRequired = false, icon?: React.ReactNode) => {
+		return (
+			<span className="text-[10px] uppercase tracking-widest text-theme-text-secondary flex items-center gap-1.5">
+				{icon}
+				{label}
+				{isRequired ? <span className="text-theme-accent">*</span> : null}
+			</span>
+		);
+	};
 
 	const handleThemeChange = (newTheme: "dark" | "light") => {
 		setTheme(newTheme);
@@ -151,13 +163,6 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 			displayName: providerCatalogItem.displayName,
 			availableModelsText: providerCatalogItem.defaultModels.map((model) => model.modelId).join(", "),
 			defaultModelId: providerCatalogItem.defaultModels[0]?.modelId ?? "",
-			fastModelId: providerCatalogItem.defaultCapabilityModelIds.fast ?? "",
-			balancedModelId:
-				providerCatalogItem.defaultCapabilityModelIds.balanced ??
-				providerCatalogItem.defaultModels[0]?.modelId ??
-				"",
-			strongModelId:
-				providerCatalogItem.defaultCapabilityModelIds.strong ?? providerCatalogItem.defaultModels[0]?.modelId ?? "",
 			defaultThinkingLevel: providerCatalogItem.defaultThinkingLevel,
 			baseUrl: providerCatalogItem.baseUrlRequired ? editingConfig.baseUrl : "",
 			apiKey: "",
@@ -182,9 +187,6 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 					.map((modelId) => modelId.trim())
 					.filter((modelId) => modelId.length > 0),
 				defaultModelId: editingConfig.defaultModelId || undefined,
-				fastModelId: editingConfig.fastModelId || undefined,
-				balancedModelId: editingConfig.balancedModelId || undefined,
-				strongModelId: editingConfig.strongModelId || undefined,
 				defaultThinkingLevel: editingConfig.defaultThinkingLevel || undefined,
 				enabled: editingConfig.enabled,
 				apiKey: editingConfig.apiKey || undefined,
@@ -437,9 +439,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 									>
 										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.provider")}
-												</label>
+												<label>{renderFieldLabel(t("settings.provider"), true)}</label>
 												<CustomSelect
 													value={editingConfig.providerType}
 													onChange={handleProviderTypeChange}
@@ -451,9 +451,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 												/>
 											</div>
 											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.displayName")}
-												</label>
+												<label>{renderFieldLabel(t("settings.displayName"), true)}</label>
 												<input
 													type="text"
 													value={editingConfig.displayName}
@@ -476,8 +474,8 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 
 										{selectedProviderType.supportsCustomBaseUrl && (
 											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.baseUrl")}
+												<label>
+													{renderFieldLabel(t("settings.baseUrl"), selectedProviderType.baseUrlRequired)}
 												</label>
 												<input
 													type="text"
@@ -493,14 +491,13 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 													placeholder={
 														selectedProviderType.baseUrlRequired ? "https://..." : t("settings.optional")
 													}
+													required={selectedProviderType.baseUrlRequired}
 												/>
 											</div>
 										)}
 
 										<div className="space-y-2">
-											<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-												{t("settings.availableModels")}
-											</label>
+											<label>{renderFieldLabel(t("settings.availableModels"), true)}</label>
 											<input
 												type="text"
 												value={editingConfig.availableModelsText}
@@ -518,9 +515,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 
 										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.defaultModel")}
-												</label>
+												<label>{renderFieldLabel(t("settings.defaultModel"), true)}</label>
 												<input
 													type="text"
 													value={editingConfig.defaultModelId}
@@ -536,9 +531,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 												/>
 											</div>
 											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.defaultThinkingLevel")}
-												</label>
+												<label>{renderFieldLabel(t("settings.defaultThinkingLevel"))}</label>
 												<input
 													type="text"
 													value={editingConfig.defaultThinkingLevel}
@@ -554,65 +547,14 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 											</div>
 										</div>
 
-										<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.fastModel")}
-												</label>
-												<input
-													type="text"
-													value={editingConfig.fastModelId}
-													onChange={(event) =>
-														setEditingConfig((currentConfig) =>
-															currentConfig
-																? { ...currentConfig, fastModelId: event.target.value }
-																: currentConfig,
-														)
-													}
-													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
-												/>
-											</div>
-											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.balancedModel")}
-												</label>
-												<input
-													type="text"
-													value={editingConfig.balancedModelId}
-													onChange={(event) =>
-														setEditingConfig((currentConfig) =>
-															currentConfig
-																? { ...currentConfig, balancedModelId: event.target.value }
-																: currentConfig,
-														)
-													}
-													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
-												/>
-											</div>
-											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-													{t("settings.strongModel")}
-												</label>
-												<input
-													type="text"
-													value={editingConfig.strongModelId}
-													onChange={(event) =>
-														setEditingConfig((currentConfig) =>
-															currentConfig
-																? { ...currentConfig, strongModelId: event.target.value }
-																: currentConfig,
-														)
-													}
-													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
-												/>
-											</div>
-										</div>
-
 										{selectedProviderType.secretFields.includes("apiKey") && (
 											<div className="space-y-2">
-												<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary flex items-center gap-1.5">
-													<Key className="w-3 h-3" />
-													{t("settings.apiKey")}
+												<label>
+													{renderFieldLabel(
+														t("settings.apiKey"),
+														apiKeyRequired,
+														<Key className="w-3 h-3" />,
+													)}
 												</label>
 												<input
 													type="password"
@@ -626,7 +568,13 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 													}
 													placeholder={t("settings.apiKeyPlaceholder")}
 													className="w-full bg-theme-base border border-theme-border rounded-lg px-4 py-2.5 text-sm text-theme-text"
+													required={apiKeyRequired}
 												/>
+												{editingConfig.hasStoredCredential ? (
+													<p className="text-xs text-theme-text-secondary">
+														{t("settings.apiKeyStoredHint")}
+													</p>
+												) : null}
 											</div>
 										)}
 
@@ -637,9 +585,7 @@ export function SettingsDialog({ isOpen, onClose }: { isOpen: boolean; onClose: 
 										)}
 
 										<div className="space-y-2">
-											<label className="text-[10px] uppercase tracking-widest text-theme-text-secondary">
-												{t("settings.headersJson")}
-											</label>
+											<label>{renderFieldLabel(t("settings.headersJson"))}</label>
 											<textarea
 												value={editingConfig.headersText}
 												onChange={(event) =>

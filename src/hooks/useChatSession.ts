@@ -35,6 +35,12 @@ export interface SessionData {
 	status: "idle" | "running" | "error";
 }
 
+type NewSessionModelSelection = {
+	providerConfigId: string;
+	modelId?: string;
+	thinkingLevel?: string;
+};
+
 const API_BASE_URL = getApiBaseUrl();
 
 const buildSessionsUrl = (sessionId: string) => {
@@ -254,7 +260,11 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 	);
 
 	const sendMessage = useCallback(
-		async (content: string, currentSessionId?: string | null) => {
+		async (
+			content: string,
+			currentSessionId?: string | null,
+			newSessionModelSelection?: NewSessionModelSelection,
+		) => {
 			const streamId = activeStreamIdRef.current + 1;
 			activeStreamIdRef.current = streamId;
 
@@ -289,8 +299,9 @@ export function useChatSession(initialSessionId?: string, onSessionCreated?: (se
 						...(currentSessionId
 							? {}
 							: {
-									model: "deepseek/deepseek-v4-pro",
-									thinkingLevel: "medium",
+									providerConfigId: newSessionModelSelection?.providerConfigId,
+									modelId: newSessionModelSelection?.modelId,
+									thinkingLevel: newSessionModelSelection?.thinkingLevel,
 								}),
 						input: {
 							content: [{ type: "text", text: content }],

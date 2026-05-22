@@ -13,10 +13,12 @@ import {
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
+import { CustomSelect } from "../components/CustomSelect";
 import { AgentMessage } from "../components/chat/AgentMessage";
 import { SUB_AGENTS } from "../data/dummy";
 import type { MessageEntry } from "../hooks/chat-message-state";
 import { useChatSession } from "../hooks/useChatSession";
+import { useModelConfigs } from "../hooks/useModelConfigs";
 import { cn } from "../lib/utils";
 
 function _AudioBookCard({ message }: { message: any }) {
@@ -120,8 +122,12 @@ export function ChatPage() {
 			[navigate],
 		),
 	);
+	const { configs: providerConfigs, isLoading: providersLoading } = useModelConfigs();
 	const [inputVal, setInputVal] = useState("");
 	const [isRecording, setIsRecording] = useState(false);
+	const [selectedProviderConfigId, setSelectedProviderConfigId] = useState("");
+	const [selectedModelId, setSelectedModelId] = useState("");
+	const [selectedThinkingLevel, setSelectedThinkingLevel] = useState("");
 	const { t } = useTranslation();
 	const messagesEndRef = React.useRef<HTMLDivElement>(null);
 	const hasWorkingAssistant = messages.some(
@@ -138,8 +144,68 @@ export function ChatPage() {
 		}
 	}, [chatId, fetchSession]);
 
+	useEffect(() => {
+		const firstEnabledProvider = providerConfigs.find((providerConfig) => providerConfig.enabled);
+		const selectedProviderStillEnabled = providerConfigs.some(
+			(providerConfig) => providerConfig.providerConfigId === selectedProviderConfigId && providerConfig.enabled,
+		);
+
+		if (selectedProviderStillEnabled) {
+			return;
+		}
+
+		if (firstEnabledProvider) {
+			setSelectedProviderConfigId(firstEnabledProvider.providerConfigId);
+			return;
+		}
+
+		setSelectedProviderConfigId("");
+	}, [providerConfigs, selectedProviderConfigId]);
+
 	const _currentChat = session;
 	const isNewChat = !chatId; // if we don't have chatId, it's new
+	const hasProviderConfigs = providerConfigs.some((providerConfig) => providerConfig.enabled);
+	const selectedProviderConfig =
+		providerConfigs.find((providerConfig) => providerConfig.providerConfigId === selectedProviderConfigId) ?? null;
+	const selectedModel =
+		selectedProviderConfig?.availableModels.find((availableModel) => availableModel.modelId === selectedModelId) ??
+		null;
+	const availableThinkingLevels = selectedModel?.supportedThinkingLevels ?? [];
+
+	useEffect(() => {
+		if (!selectedProviderConfig) {
+			setSelectedModelId("");
+			setSelectedThinkingLevel("");
+			return;
+		}
+
+		const selectedModelStillAvailable = selectedProviderConfig.availableModels.some(
+			(availableModel) => availableModel.modelId === selectedModelId,
+		);
+		const nextModelId = selectedModelStillAvailable
+			? selectedModelId
+			: selectedProviderConfig.defaultModelId || selectedProviderConfig.availableModels[0]?.modelId || "";
+
+		if (nextModelId !== selectedModelId) {
+			setSelectedModelId(nextModelId);
+		}
+	}, [selectedModelId, selectedProviderConfig]);
+
+	useEffect(() => {
+		if (availableThinkingLevels.length === 0) {
+			setSelectedThinkingLevel("");
+			return;
+		}
+
+		const preferredThinkingLevel = selectedProviderConfig?.defaultThinkingLevel ?? availableThinkingLevels[0] ?? "";
+		if (!availableThinkingLevels.includes(selectedThinkingLevel)) {
+			setSelectedThinkingLevel(
+				availableThinkingLevels.includes(preferredThinkingLevel)
+					? preferredThinkingLevel
+					: (availableThinkingLevels[0] ?? ""),
+			);
+		}
+	}, [availableThinkingLevels, selectedProviderConfig?.defaultThinkingLevel, selectedThinkingLevel]);
 
 	const [isRightCollapsed, setIsRightCollapsed] = useState(() => {
 		return localStorage.getItem("agentos_right_sidebar_collapsed") === "true";
@@ -293,6 +359,61 @@ export function ChatPage() {
 
 				{/* Input Area */}
 				<div className="p-6 border-t border-theme-border bg-theme-surface flex-shrink-0">
+					{isNewChat && (
+						<div className="max-w-4xl mx-auto mb-3 flex flex-wrap gap-3 items-center text-xs text-theme-text-secondary">
+							<span className="uppercase tracking-widest">{t("chat.provider")}</span>
+							<CustomSelect
+								value={selectedProviderConfigId}
+								onChange={setSelectedProviderConfigId}
+								className="min-w-56 bg-theme-surface-hover border border-theme-border rounded-full px-4 py-2 text-sm text-theme-text"
+								options={
+									hasProviderConfigs
+										? providerConfigs
+												.filter((providerConfig) => providerConfig.enabled)
+												.map((providerConfig) => ({
+													value: providerConfig.providerConfigId,
+													label: providerConfig.displayName,
+												}))
+										: [
+												{
+													value: "",
+													label: providersLoading
+														? t("settings.loadingProviders")
+														: t("chat.noProvidersConfigured"),
+												},
+											]
+								}
+							/>
+							<span className="uppercase tracking-widest">{t("chat.model")}</span>
+							<CustomSelect
+								value={selectedModelId}
+								onChange={setSelectedModelId}
+								className="min-w-40 bg-theme-surface-hover border border-theme-border rounded-full px-4 py-2 text-sm text-theme-text"
+								options={
+									selectedProviderConfig
+										? selectedProviderConfig.availableModels.map((availableModel) => ({
+												value: availableModel.modelId,
+												label: availableModel.displayName,
+											}))
+										: [{ value: "", label: t("chat.noProvidersConfigured") }]
+								}
+							/>
+							{availableThinkingLevels.length > 0 && (
+								<>
+									<span className="uppercase tracking-widest">{t("chat.thinkingLevel")}</span>
+									<CustomSelect
+										value={selectedThinkingLevel}
+										onChange={setSelectedThinkingLevel}
+										className="min-w-40 bg-theme-surface-hover border border-theme-border rounded-full px-4 py-2 text-sm text-theme-text"
+										options={availableThinkingLevels.map((thinkingLevel) => ({
+											value: thinkingLevel,
+											label: thinkingLevel,
+										}))}
+									/>
+								</>
+							)}
+						</div>
+					)}
 					<div className="relative flex items-center max-w-4xl mx-auto">
 						<button className="absolute left-4 text-theme-text-secondary hover:text-theme-accent transition-colors">
 							<Plus className="w-5 h-5 flex-shrink-0" />
@@ -305,14 +426,22 @@ export function ChatPage() {
 							onKeyDown={(e) => {
 								if (e.key === "Enter" && !e.shiftKey) {
 									e.preventDefault();
-									if (inputVal.trim() && !isLoading) {
-										sendMessage(inputVal.trim(), chatId);
+									if (inputVal.trim() && !isLoading && (!isNewChat || selectedProviderConfigId.length > 0)) {
+										sendMessage(inputVal.trim(), chatId, {
+											providerConfigId: selectedProviderConfigId,
+											modelId: selectedModelId || undefined,
+											thinkingLevel: selectedThinkingLevel || undefined,
+										});
 										setInputVal("");
 									}
 								}
 							}}
-							placeholder={t("chat.messagePlaceholder")}
-							disabled={isLoading}
+							placeholder={
+								isNewChat && !hasProviderConfigs
+									? t("chat.configureProviderPlaceholder")
+									: t("chat.messagePlaceholder")
+							}
+							disabled={isLoading || (isNewChat && !hasProviderConfigs)}
 							className="w-full bg-theme-surface-hover border border-theme-border rounded-full py-3 px-12 text-sm text-theme-text focus:outline-none focus:border-theme-accent/50 placeholder-theme-text-muted transition-colors disabled:opacity-50"
 						/>
 
@@ -328,12 +457,16 @@ export function ChatPage() {
 							</button>
 							<button
 								onClick={() => {
-									if (inputVal.trim() && !isLoading) {
-										sendMessage(inputVal.trim(), chatId);
+									if (inputVal.trim() && !isLoading && (!isNewChat || selectedProviderConfigId.length > 0)) {
+										sendMessage(inputVal.trim(), chatId, {
+											providerConfigId: selectedProviderConfigId,
+											modelId: selectedModelId || undefined,
+											thinkingLevel: selectedThinkingLevel || undefined,
+										});
 										setInputVal("");
 									}
 								}}
-								disabled={isLoading || !inputVal.trim()}
+								disabled={isLoading || !inputVal.trim() || (isNewChat && !hasProviderConfigs)}
 								className="text-theme-accent hover:text-theme-text transition-colors disabled:opacity-50"
 							>
 								<Send className="w-5 h-5 flex-shrink-0 ml-1" />

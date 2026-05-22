@@ -9,8 +9,6 @@ export interface ScheduledTask {
 	status: "active" | "paused";
 }
 
-export type CapabilityTier = "fast" | "balanced" | "strong";
-
 export type ProviderAuthMode = "api_key" | "oauth" | "none";
 
 export type OAuthCredentialMaterial = {
@@ -35,8 +33,8 @@ export type LlmProviderTypeCatalogItem = {
 		modelId: string;
 		displayName: string;
 		supportsReasoning: boolean;
+		supportedThinkingLevels?: string[];
 	}>;
-	defaultCapabilityModelIds: Partial<Record<CapabilityTier, string>>;
 	defaultThinkingLevel: string;
 	secretFields: Array<"apiKey" | "oauthCredential">;
 	helpText?: string;
@@ -53,11 +51,9 @@ export type LlmProviderConfig = {
 		modelId: string;
 		displayName: string;
 		supportsReasoning: boolean;
+		supportedThinkingLevels?: string[];
 	}>;
 	defaultModelId: string;
-	fastModelId?: string;
-	balancedModelId?: string;
-	strongModelId?: string;
 	defaultThinkingLevel: string;
 	enabled: boolean;
 	hasStoredCredential: boolean;
@@ -70,9 +66,6 @@ export type UpsertLlmProviderConfigRequest = {
 	headers?: Record<string, string>;
 	availableModels?: string[];
 	defaultModelId?: string;
-	fastModelId?: string;
-	balancedModelId?: string;
-	strongModelId?: string;
 	defaultThinkingLevel?: string;
 	enabled?: boolean;
 	apiKey?: string;
